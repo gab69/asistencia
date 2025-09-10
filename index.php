@@ -32,7 +32,7 @@ try {
     die("Error en el sistema. Por favor intente más tarde.");
 }
 
-// Crear tablas si no existen (solo para desarrollo)
+// Crear tablas si no existen 
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS empleados (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -83,20 +83,9 @@ $pdo->exec("
 // Insertar datos de prueba (solo para desarrollo)
 $pdo->exec("
     INSERT IGNORE INTO empleados VALUES
-    (1, '12345678', 'Juan', 'Pérez', 'Académico', 'Profesor', '2025-01-01', '2027-12-31', 'Docente', NULL, NULL, NULL, NULL, 'fotos_empleados/12345678.png'),
-    (2, '23456789', 'María', 'Gómez', 'Administración', 'Secretaria', '2025-01-15', '2026-12-31', 'Administrativo', '08:30:00', '12:30:00', '13:30:00', '17:30:00', 'fotos_empleados/23456789.png'),
-    (3, '34567890', 'Carlos', 'López', 'TI', 'Desarrollador', '2025-02-01', '2027-06-30', 'Administrativo', '09:00:00', '13:00:00', '14:00:00', '18:00:00', 'fotos_empleados/34567890.png'),
-    (4, '45678901', 'Ana', 'Rodríguez', 'Contabilidad', 'Contadora', '2025-03-10', '2027-03-10', 'Administrativo', '08:00:00', '12:00:00', '13:00:00', '17:00:00', 'fotos_empleados/45678901.png'),
-    (5, '56789012', 'Luis', 'Martínez', 'Recursos Humanos', 'Analista', '2025-01-01', '2026-12-31', 'Administrativo', '08:30:00', '12:30:00', '13:30:00', '17:30:00', 'fotos_empleados/56789012.png'),
-    (6, '67890123', 'Sofía', 'Hernández', 'Marketing', 'Especialista', '2025-04-01', '2027-04-01', 'Administrativo', '09:00:00', '13:00:00', '14:00:00', '18:00:00', 'fotos_empleados/67890123.png'),
-    (7, '78901234', 'Pedro', 'Díaz', 'Logística', 'Coordinador', '2025-05-15', '2026-05-15', 'Administrativo', '08:00:00', '12:00:00', '13:00:00', '17:00:00', 'fotos_empleados/78901234.png'),
-    (8, '89012345', 'Laura', 'Torres', 'Académico', 'Investigadora', '2025-06-01', '2027-06-01', 'Docente', NULL, NULL, NULL, NULL, 'fotos_empleados/89012345.png'),
-    (9, '90123456', 'Jorge', 'Ramírez', 'TI', 'Soporte Técnico', '2025-07-01', '2027-07-01', 'Administrativo', '09:00:00', '13:00:00', '14:00:00', '18:00:00', 'fotos_empleados/90123456.png'),
-    (10, '01234567', 'Carmen', 'Vargas', 'Administración', 'Asistente', '2025-08-01', '2027-08-01', 'Administrativo', '08:00:00', '12:00:00', '13:00:00', '17:00:00', 'fotos_empleados/01234567.png');
-    
+    (1, '12345678', 'Juan', 'Pérez', 'Académico', 'Profesor', '2025-01-01', '2027-12-31', 'Docente', NULL, NULL, NULL, NULL, 'fotos_empleados/12345678.png');
     INSERT IGNORE INTO usuarios_admin VALUES 
-    (1, 'admin', '$2y$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', NOW()),
-    (2, 'supervisor', '$2y$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'supervisor', NOW());
+    (1, 'admin', '$2y$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', NOW());
 ");
 
 // =============================================
@@ -476,7 +465,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
-            margin-bottom: 1rem;
             text-align: center;
             text-decoration: none;
             font-family: 'Poppins', sans-serif;
@@ -486,6 +474,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             justify-content: center;
             gap: 0.5rem;
         }
+        
         
         .btn-primary {
             background-color: var(--primary);
@@ -551,6 +540,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             font-size: 1.8rem;
             font-weight: 600;
             margin-bottom: 1rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
         
         .typing-container {
@@ -702,6 +692,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             border-bottom: 1px solid var(--light);
             background-color: var(--primary);
             color: white;
+            position: relative;
         }
         
         .modal-header h3 {
@@ -717,6 +708,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             cursor: pointer;
             padding: 0 0.5rem;
             transition: var(--transition);
+            position: absolute;
+            right: 15px;
+            top: 15px;
         }
         
         .modal-close:hover {
@@ -893,6 +887,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             font-size: 1.1rem;
         }
         
+        .admin-access-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: var(--primary);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+            transition: var(--transition);
+        }
+        
+        .admin-access-btn:hover {
+            background-color: var(--primary-dark);
+            transform: scale(1.1) rotate(30deg);
+        }
+        
         @media (max-width: 992px) {
             .app-container {
                 flex-direction: column;
@@ -1002,6 +1019,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
     </style>
 </head>
 <body>
+    <!-- Botón de acceso administrador en esquina superior derecha -->
+    <div class="admin-access-btn" id="btn-admin-small">
+        <i class="fas fa-cog"></i>
+    </div>
+
     <!-- Fondo oscuro transparente -->
     <div class="notification-overlay <?= ($notification || $employeeData) ? 'show' : '' ?>" id="notification-overlay"></div>
 
@@ -1075,8 +1097,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
                     <div class="form-group">
                         <label for="modal-dni-permisos">DNI:</label>
                         <input type="text" id="modal-dni-permisos" name="dni" required 
-                               pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
-                               placeholder="Ingrese su DNI" maxlength="8">
+                                pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
+                             placeholder="Ingrese su DNI" maxlength="8" inputmode="numeric"
+                             oninput="this.value = this.value.replace(/[^0-9]/g, '');">
                     </div>
                     
                     <div class="form-group">
@@ -1157,13 +1180,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
                 <p>Control para Personal Administrativo</p>
             </div>
             
-            <form method="POST" action="">
+            <form method="POST" action="" id="main-form">
                 <div class="form-group">
                     <label for="dni">Número de DNI:</label>
-                    <input type="text" id="dni" name="dni" required 
-                           pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
-                           placeholder="Ingrese su DNI" maxlength="8">
-                </div>
+                        <input type="text" id="dni" name="dni" required autofocus
+                        pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
+                        placeholder="Ingrese su DNI" maxlength="8" inputmode="numeric"
+                        oninput="this.value = this.value.replace(/[^0-9]/g, '');">
+                    </div>
                 
                 <button type="submit" class="btn btn-primary">
                     <i class="fas fa-fingerprint"></i> Registrar Asistencia
@@ -1173,9 +1197,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             <div class="action-buttons">
                 <a href="#" class="btn btn-secondary" id="btn-permisos">
                     <i class="fas fa-calendar-check"></i> Solicitar Permiso
-                </a>
-                <a href="#" class="btn btn-secondary" id="btn-admin">
-                    <i class="fas fa-user-shield"></i> Acceso Administrador
                 </a>
             </div>
             
@@ -1213,6 +1234,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
     </div>
 
     <script>
+        // Enfocar automáticamente el campo DNI
+        document.getElementById('dni').focus();
+        
         // Actualizar reloj cada segundo
         function updateClock() {
             const now = new Date();
@@ -1353,7 +1377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         const formPermisos = document.getElementById('form-permisos');
         
         // Modal de login admin
-        const btnAdmin = document.getElementById('btn-admin');
+        const btnAdminSmall = document.getElementById('btn-admin-small');
         const modalLoginAdmin = document.getElementById('modal-login-admin');
         const modalCloseLoginAdmin = modalLoginAdmin.querySelector('.modal-close');
         const formLoginAdmin = document.getElementById('form-login-admin');
@@ -1369,8 +1393,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             modalPermisos.classList.remove('show');
         });
         
-        // Abrir modal de login admin
-        btnAdmin.addEventListener('click', (e) => {
+        // Abrir modal de login admin desde botón pequeño
+        btnAdminSmall.addEventListener('click', (e) => {
             e.preventDefault();
             modalLoginAdmin.classList.add('show');
             document.getElementById('admin-usuario').focus();
@@ -1414,6 +1438,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         modalLoginAdmin.addEventListener('click', function(e) {
             if (e.target === this) {
                 this.classList.remove('show');
+            }
+        });
+        
+        // Enfocar automáticamente el campo DNI después de cerrar modales
+        modalPermisos.addEventListener('transitionend', function() {
+            if (!this.classList.contains('show')) {
+                document.getElementById('dni').focus();
+            }
+        });
+        
+        modalLoginAdmin.addEventListener('transitionend', function() {
+            if (!this.classList.contains('show')) {
+                document.getElementById('dni').focus();
             }
         });
     </script>

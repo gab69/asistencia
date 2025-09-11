@@ -19,6 +19,15 @@ if (!file_exists(FOTOS_EMPLEADOS_DIR)) {
 
 session_start();
 
+// Almacenar notificaciones en sesión para persistencia después de redirección
+if (!isset($_SESSION['notifications'])) {
+    $_SESSION['notifications'] = [];
+}
+
+if (!isset($_SESSION['employee_data'])) {
+    $_SESSION['employee_data'] = null;
+}
+
 try {
     $dsn = "mysql:host=".DB_HOST.";dbname=".DB_NAME.";charset=utf8mb4";
     $options = [
@@ -228,8 +237,15 @@ class AttendanceSystem {
 // PROCESAMIENTO DEL FORMULARIO
 // =============================================
 $attendanceSystem = new AttendanceSystem($pdo);
-$notification = null;
-$employeeData = null;
+
+// Recuperar notificaciones y datos de empleado de la sesión
+$notification = !empty($_SESSION['notifications']) ? array_shift($_SESSION['notifications']) : null;
+$employeeData = $_SESSION['employee_data'] ?? null;
+
+// Limpiar datos de la sesión después de recuperarlos
+if ($employeeData) {
+    $_SESSION['employee_data'] = null;
+}
 
 // Procesar logout
 if (isset($_GET['logout'])) {
@@ -245,7 +261,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_login'])) {
         header("Location: admin.php");
         exit;
     } else {
-        $notification = ['message' => $result['message'], 'type' => 'error'];
+        $_SESSION['notifications'][] = ['message' => $result['message'], 'type' => 'error'];
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
     }
 }
 
@@ -256,31 +274,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         $dni = trim($_POST['dni']);
         
         if (empty($dni) || !preg_match('/^\d{8}$/', $dni)) {
-            $notification = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
+            $_SESSION['notifications'][] = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
         } else {
             $employee = $attendanceSystem->verifyEmployee($dni);
             
             if (!$employee) {
-                $notification = ['message' => 'DNI no registrado o contrato no vigente', 'type' => 'error'];
+                $_SESSION['notifications'][] = ['message' => 'DNI no registrado o contrato no vigente', 'type' => 'error'];
             } else {
-                $employeeData = $employee; // Guardar datos del empleado
+                $_SESSION['employee_data'] = $employee; // Guardar datos del empleado en sesión
                 $result = $attendanceSystem->registerAttendance($employee);
-                $notification = $result;
+                $_SESSION['notifications'][] = $result;
             }
         }
+        
+        // Prevenir reenvío del formulario
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
+        
     } elseif (isset($_POST['tipo_permiso'])) {
         // Procesamiento de permiso especial
         $dni = trim($_POST['dni']);
         
         if (empty($dni) || !preg_match('/^\d{8}$/', $dni)) {
-            $notification = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
+            $_SESSION['notifications'][] = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
         } else {
             $employee = $attendanceSystem->verifyEmployee($dni);
             
             if (!$employee) {
-                $notification = ['message' => 'DNI no registrado o contrato no vigente', 'type' => 'error'];
+                $_SESSION['notifications'][] = ['message' => 'DNI no registrado o contrato no vigente', 'type' => 'error'];
             } else {
-                $employeeData = $employee; // Guardar datos del empleado
+                $_SESSION['employee_data'] = $employee; // Guardar datos del empleado en sesión
                 $requestData = [
                     'tipo_permiso' => $_POST['tipo_permiso'],
                     'motivo' => $_POST['motivo'],
@@ -289,9 +312,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
                 ];
                 
                 $result = $attendanceSystem->registerPermission($employee, $requestData);
-                $notification = $result;
+                $_SESSION['notifications'][] = $result;
             }
         }
+        
+        // Prevenir reenvío del formulario
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
     }
 }
 ?>
@@ -585,6 +612,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             align-items: center;
             z-index: 1002;
             box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        
+        .employee-card.show {
+            opacity: 1;
+            visibility: visible;
         }
         
         .employee-photo {
@@ -766,11 +801,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
             transition: all 0.3s ease;
             z-index: 1003;
             opacity: 0;
+            visibility: hidden;
         }
         
         .notification.show {
             transform: translateY(0);
             opacity: 1;
+            visibility: visible;
         }
         
         .notification-header {
@@ -1025,11 +1062,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
     </div>
 
     <!-- Fondo oscuro transparente -->
-    <div class="notification-overlay <?= ($notification || $employeeData) ? 'show' : '' ?>" id="notification-overlay"></div>
+    <div class="notification-overlay" id="notification-overlay"></div>
 
     <!-- Notificación en esquina superior derecha -->
     <?php if ($notification): ?>
-        <div class="notification <?= $notification['type'] ?> show" id="notification">
+        <div class="notification <?= $notification['type'] ?>" id="notification">
             <div class="notification-header">
                 <div class="notification-icon">
                     <?php switch($notification['type']) {
@@ -1078,8 +1115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
                     <strong>Cargo</strong>
                     <p><?= htmlspecialchars($employeeData['puesto']) ?></p>
                     
-                    <strong>Contrato</strong>
+                   <!--  <strong>Contrato</strong>
                     <p><?= date('d/m/Y', strtotime($employeeData['inicio_contrato'])) ?> - <?= date('d/m/Y', strtotime($employeeData['fin_contrato'])) ?></p>
+                    -->
                 </div>
             </div>
         </div>
@@ -1314,25 +1352,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         const notification = document.getElementById('notification');
         const employeeCard = document.getElementById('employee-card');
         
+        // Mostrar overlay si hay notificación o tarjeta de empleado
+        if (notification || employeeCard) {
+            notificationOverlay.classList.add('show');
+        }
+        
+        // Mostrar notificación si existe
         if (notification) {
-            // Mostrar overlay y notificación
             setTimeout(() => {
-                notificationOverlay.classList.add('show');
                 notification.classList.add('show');
-            }, 100);
-            
-            // Ocultar notificación después de 2 segundos
-            setTimeout(() =>{
-                notification.classList.remove('show');
                 
-                // Ocultar overlay y tarjeta de empleado
+                // Ocultar notificación después de casi 3 segundos
                 setTimeout(() => {
-                    notificationOverlay.classList.remove('show');
-                    if (employeeCard) {
-                        employeeCard.style.display = 'none';
+                    notification.classList.remove('show');
+                    
+                    // Si no hay tarjeta de empleado, ocultar overlay también
+                    if (!employeeCard) {
+                        setTimeout(() => {
+                            notificationOverlay.classList.remove('show');
+                        }, 300);
                     }
-                }, 300);
-            }, 2000);
+                }, 2500);
+            }, 100);
+        }
+        
+        // Mostrar tarjeta de empleado si existe
+        if (employeeCard) {
+            setTimeout(() => {
+                employeeCard.classList.add('show');
+                
+                // Ocultar tarjeta de empleado después de casi 3 segundos
+                setTimeout(() => {
+                    employeeCard.classList.remove('show');
+                    
+                    // Ocultar overlay después de la animación
+                    setTimeout(() => {
+                        notificationOverlay.classList.remove('show');
+                    }, 300);
+                }, 2500);// cada 1000 es un segundo
+            }, 100);
         }
         
         // Crear animación de fondo con círculos
@@ -1383,7 +1441,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         const formLoginAdmin = document.getElementById('form-login-admin');
         
         // Abrir modal de permisos
-        btnPermisos.addEventListener('click', () => {
+        btnPermisos.addEventListener('click', (e) => {
+            e.preventDefault();
             modalPermisos.classList.add('show');
             document.getElementById('modal-dni-permisos').focus();
         });

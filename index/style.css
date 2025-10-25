@@ -1,0 +1,1415 @@
+
+        :root {
+            /* Paleta de colores principal mejorada para reducir fatiga visual */
+            --primary: #8A1538;
+            --primary-light: #A42D52;
+            --primary-dark: #6D0E2D;
+            --secondary: #D4AF37;
+            --secondary-light: #E8C766;
+            --secondary-dark: #BF9428;
+            --success: #4CAF50;
+            --error: #F44336;
+            --warning: #FFC107;
+            --dark: #212121;
+            --light: #F5F5F5;
+            --white: #FFFFFF;
+            --gray: #9E9E9E;
+            --text-dark: #333333;
+            --text-light: #757575;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,0.1);
+            --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        
+        /* Estilos Halloween - Colores más suaves */
+        .halloween {
+            --primary: #8B0000;
+            --primary-light: #A52A2A;
+            --primary-dark: #5C0000;
+            --secondary: #FF8C00;
+            --secondary-light: #FFA54F;
+            --secondary-dark: #CD6600;
+            --success: #228B22;
+            --error: #DC143C;
+            --warning: #FFD700;
+        }
+        
+        /* Estilos Navidad y Año Nuevo - Colores más equilibrados */
+        .navidad {
+            --primary: #B71C1C;
+            --primary-light: #D32F2F;
+            --primary-dark: #8B0000;
+            --secondary: #F5F5F5;
+            --secondary-light: #FFFFFF;
+            --secondary-dark: #E0E0E0;
+            --success: #2E7D32;
+            --error: #C62828;
+            --warning: #FF8F00;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            height: 100%;
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--light);
+            color: var(--text-dark);
+            line-height: 1.6;
+            font-size: 1.25em;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .left-panel {
+            width: 40%;
+            background-color: var(--white);
+            padding: 3.75rem 5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+            z-index: 10;
+            box-shadow: var(--shadow-md);
+            height: 100vh;
+        }
+        
+        .left-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 7.5px;
+            background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+        }
+        
+        .right-panel {
+            width: 60%;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 3.75rem;
+            color: var(--white);
+            position: relative;
+            overflow: hidden;
+            height: 100vh;
+        }
+        
+        .right-panel::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 70%);
+            transform: rotate(30deg);
+        }
+        
+        .header {
+            text-align: center;
+         
+        }
+        
+        .logo {
+            width: 187.5px;
+            margin-bottom: 1.875rem;
+            filter: brightness(1.2) drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+            object-fit: contain;
+        }
+        
+        .header h1 {
+            color: var(--primary);
+            margin-bottom: 0.625rem;
+            font-size: 2.25rem;
+            font-weight: 700;
+        }
+        
+        .header p {
+            color: var(--gray);
+            font-size: 1.125rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.875rem;
+            position: relative;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 0.625rem;
+            font-weight: 500;
+            color: var(--text-dark);
+            font-size: 1.125rem;
+        }
+        
+        input[type="text"], input[type="password"], input[type="time"], select, textarea {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            border: 2.5px solid var(--light);
+            border-radius: 10px;
+            font-size: 1.25rem;
+            transition: var(--transition);
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--white);
+            box-shadow: var(--shadow-sm);
+        }
+        
+        input[type="text"]:focus, input[type="password"]:focus, input[type="time"]:focus, select:focus, textarea:focus {
+            border-color: var(--primary-light);
+            outline: none;
+            box-shadow: 0 0 0 3.75px rgba(138, 21, 56, 0.1);
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 125px;
+        }
+        
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 1.25rem;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.25rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-align: center;
+            text-decoration: none;
+            font-family: 'Poppins', sans-serif;
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.625rem;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary);
+            box-shadow: 0 5px 7.5px rgba(138, 21, 56, 0.2);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+            transform: translateY(-2.5px);
+            box-shadow: 0 7.5px 15px rgba(138, 21, 56, 0.3);
+        }
+        
+        .btn-secondary {
+            background-color: var(--secondary);
+            color: var(--dark);
+            box-shadow: 0 5px 7.5px rgba(212, 175, 55, 0.2);
+        }
+        
+        .btn-secondary:hover {
+            background-color: var(--secondary-dark);
+            transform: translateY(-2.5px);
+            box-shadow: 0 7.5px 15px rgba(212, 175, 55, 0.3);
+        }
+        
+        .datetime-container {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            width: 100%;
+            padding: 0 2.5rem;
+        }
+        
+        .current-date {
+            font-size: 1.875rem;
+            margin-bottom: 0.625rem;
+            font-weight: 500;
+            opacity: 0.9;
+        }
+        
+        .current-time {
+            font-size: 6.25rem;
+            font-weight: 300;
+            letter-spacing: 2.5px;
+            font-variant-numeric: tabular-nums;
+            width: 500px;
+            margin: 0 auto;
+            line-height: 1;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .welcome-container {
+            position: absolute;
+            bottom: 30%;
+            left: 0;
+            width: 100%;
+            padding: 0 2.5rem;
+            text-align: center;
+        }
+        
+        .welcome-message {
+            font-size: 2.25rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            text-shadow: 0 2.5px 5px rgba(0,0,0,0.2);
+            color: #FFFFFF;
+            animation: welcome-color-change 3s infinite alternate;
+        }
+        
+        @keyframes welcome-color-change {
+            0% {
+                color: #FFFFFF;
+            }
+            100% {
+                color: #FFD700;
+            }
+        }
+        
+        .typing-container {
+            display: inline-block;
+            text-align: center;
+            min-height: 5.625rem;
+        }
+        
+        .typing-line {
+            display: block;
+            height: 1.875rem;
+            overflow: hidden;
+            margin-bottom: 0.625rem;
+        }
+        
+        .typing-text {
+            border-right: 2.5px solid var(--white);
+            display: inline-block;
+            animation: blink-caret 0.75s step-end infinite;
+            color: #FFFFFF;
+        }
+        
+        @keyframes blink-caret {
+            from, to { border-color: transparent }
+            50% { border-color: var(--white); }
+        }
+        
+        .employee-card {
+            background-color: rgba(247, 241, 241, 1);
+            backdrop-filter: blur(10px);
+            padding: 1.875rem;
+            border-radius: 15px;
+            width: 80%;
+            max-width: 625px;
+            border: 2.5px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.5s ease;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1002;
+            box-shadow: 0 12.5px 31.25px rgba(0,0,0,0.2);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        
+        .employee-card.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .employee-photo {
+            width: 125px;
+            height: 125px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3.75px solid var(--white);
+            box-shadow: var(--shadow-md);
+            margin-bottom: 1.25rem;
+        }
+        
+        .employee-card h3 {
+            margin-bottom: 1.25rem;
+            border-bottom: 1.25px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 0.625rem;
+            font-size: 1.375rem;
+            font-weight: 600;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .employee-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+            width: 100%;
+        }
+        
+        .employee-info p {
+            margin-bottom: 0.625rem;
+            font-weight: 500;
+        }
+        
+        .employee-info strong {
+            display: block;
+            font-weight: 400;
+            font-size: 1rem;
+            opacity: 0.8;
+            margin-bottom: 0.25rem;
+        }
+        
+        .footer {
+            margin-top: auto;
+            text-align: center;
+            color: var(--gray);
+            font-size: 1rem;
+            padding-top: 1.25rem;
+            border-top: 1.25px solid var(--light);
+        }
+        
+        .action-buttons {
+            margin-top: 1.875rem;
+            display: flex;
+            gap: 1.25rem;
+        }
+        
+        .action-buttons .btn {
+            margin-bottom: 0;
+            flex: 1;
+        }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .modal {
+            background-color: var(--white);
+            border-radius: 15px;
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 800px;
+            overflow: hidden;
+            transform: translateY(25px);
+            transition: transform 0.3s ease;
+        }
+        
+        .modal-overlay.show .modal {
+            transform: translateY(0);
+        }
+        
+        .modal-header {
+            padding: 1.875rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1.25px solid var(--light);
+            background-color: var(--primary);
+            color: white;
+            position: relative;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.875rem;
+            cursor: pointer;
+            padding: 0 0.625rem;
+            transition: var(--transition);
+            position: absolute;
+            right: 18.75px;
+            top: 18.75px;
+        }
+        
+        .modal-close:hover {
+            transform: rotate(90deg);
+        }
+        
+        .modal-body {
+            padding: 1.875rem;
+        }
+        
+        .permission-form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+        }
+        
+        .permission-form-grid .form-group {
+            margin-bottom: 1.25rem;
+        }
+        
+        .permission-form-grid .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 1.25rem;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        .notification-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(3px);
+        }
+        
+        .notification-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            background-color: var(--white);
+            border-radius: 15px;
+            box-shadow: var(--shadow-lg);
+            width: 100%;
+            max-width: 375px;
+            overflow: hidden;
+            transform: translateY(-125px);
+            transition: all 0.3s ease;
+            z-index: 1003;
+            opacity: 0;
+            visibility: hidden;
+        }
+        
+        .notification.show {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .notification-header {
+            padding: 1.25rem;
+            display: flex;
+            align-items: center;
+            border-bottom: 1.25px solid var(--light);
+        }
+        
+        .notification-icon {
+            width: 37.5px;
+            height: 37.5px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .success .notification-icon {
+            background-color: rgba(76, 175, 80, 0.1);
+            color: var(--success);
+        }
+        
+        .error .notification-icon {
+            background-color: rgba(244, 67, 54, 0.1);
+            color: var(--error);
+        }
+        
+        .warning .notification-icon {
+            background-color: rgba(255, 193, 7, 0.1);
+            color: var(--warning);
+        }
+        
+        .notification-title {
+            font-weight: 600;
+            color: var(--dark);
+            font-size: 1.125rem;
+        }
+        
+        .notification-body {
+            padding: 1.25rem;
+            color: var(--dark);
+            font-size: 1.125rem;
+        }
+        
+        .progress-bar {
+            height: 5px;
+            background-color: rgba(0, 0, 0, 0.1);
+            width: 100%;
+        }
+        
+        .progress-bar::after {
+            content: '';
+            display: block;
+            height: 100%;
+            animation: progress 2.5s linear forwards;
+        }
+        
+        .success .progress-bar::after {
+            background-color: var(--success);
+        }
+        
+        .error .progress-bar::after {
+            background-color: var(--error);
+        }
+        
+        .warning .progress-bar::after {
+            background-color: var(--warning);
+        }
+        
+        @keyframes progress {
+            from { width: 100%; }
+            to { width: 0%; }
+        }
+        
+        .bg-animation {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+        
+        .bg-circle {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            animation: float 15s infinite linear;
+        }
+        
+        @keyframes float {
+            0% {
+                transform: translateY(0) rotate(0deg);
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-1000px) rotate(720deg);
+                opacity: 0;
+            }
+        }
+        
+        .codigo-solicitud {
+            background-color: var(--primary);
+            color: white;
+            padding: 0.625rem 1.25rem;
+            border-radius: 25px;
+            display: inline-block;
+            margin-top: 1.25rem;
+            font-weight: 600;
+            font-size: 1.375rem;
+        }
+        
+        .admin-access-btn {
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            background-color: var(--primary);
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+            transition: var(--transition);
+        }
+        
+        .admin-access-btn:hover {
+            background-color: var(--primary-dark);
+            transform: scale(1.1) rotate(30deg);
+        }
+        
+        /* =============================================
+           ESTILOS HALLOWEEN - MEJORADOS
+           ============================================= */
+        
+        .halloween .bg-animation {
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 100%);
+        }
+        
+        .halloween .bg-circle {
+            background: rgba(139, 0, 0, 0.1);
+        }
+        
+        .halloween .right-panel::before {
+            background: radial-gradient(circle, rgba(139, 0, 0, 0.3) 0%, rgba(139, 0, 0, 0) 70%);
+        }
+        
+        .halloween .ghost {
+            position: absolute;
+            width: 80px;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 50% 50% 0 0;
+            animation: float-ghost-tenebroso 25s infinite linear;
+            z-index: 1;
+            filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.5));
+            top: -150px;
+        }
+        
+        .halloween .ghost::before {
+            content: '';
+            position: absolute;
+            width: 25px;
+            height: 25px;
+            background: #333;
+            border-radius: 50%;
+            top: 25px;
+            left: 15px;
+            box-shadow: 25px 0 #333;
+        }
+        
+        .halloween .ghost::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 50%;
+            bottom: -15px;
+            left: 0;
+            box-shadow: 20px 0 rgba(255, 255, 255, 0.9),
+                        40px 0 rgba(255, 255, 255, 0.9),
+                        60px 0 rgba(255, 255, 255, 0.9);
+        }
+        
+        @keyframes float-ghost-tenebroso {
+            0% {
+                transform: translateX(-150px) translateY(0) rotate(0deg);
+                opacity: 0.3;
+            }
+            25% {
+                opacity: 0.8;
+                filter: drop-shadow(0 0 15px rgba(255, 0, 0, 0.7));
+            }
+            50% {
+                opacity: 1;
+                filter: drop-shadow(0 0 20px rgba(255, 255, 255, 0.8));
+            }
+            75% {
+                opacity: 0.8;
+                filter: drop-shadow(0 0 15px rgba(255, 165, 0, 0.7));
+            }
+            100% {
+                transform: translateX(100vw) translateY(100vh) rotate(0deg);
+                opacity: 0.3;
+            }
+        }
+        
+        .halloween .blood-drop {
+            position: absolute;
+            width: 20px;
+            height: 30px;
+            background: #8B0000;
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            animation: drip-blood-tenebroso 6s infinite linear;
+            z-index: 1;
+            filter: drop-shadow(0 0 5px rgba(139, 0, 0, 0.7));
+            top: -50px;
+        }
+        
+        .halloween .blood-drop::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 5px;
+            width: 10px;
+            height: 5px;
+            background: #8B0000;
+            border-radius: 50%;
+            opacity: 0.7;
+        }
+        
+        @keyframes drip-blood-tenebroso {
+            0% {
+                transform: translateY(-100px) translateX(0) scale(0.3);
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.8;
+            }
+            50% {
+                opacity: 1;
+                transform: translateY(50vh) translateX(10px) scale(1);
+            }
+            90% {
+                opacity: 0.8;
+            }
+            100% {
+                transform: translateY(100vh) translateX(20px) scale(1.2);
+                opacity: 0;
+            }
+        }
+        
+        .halloween .welcome-message {
+            text-shadow: 0 0 10px #8B0000, 0 0 20px #8B0000, 0 0 30px #8B0000;
+            animation: spooky-text-tenebroso 2s infinite alternate;
+        }
+        
+        .halloween .current-time {
+            color: #FF4500;
+            text-shadow: 0 0 10px #8B0000;
+        }
+        
+        .halloween .current-date {
+            color: #FFD700;
+            text-shadow: 0 0 5px #8B0000;
+        }
+        
+        @keyframes spooky-text-tenebroso {
+            0% {
+                text-shadow: 0 0 10px #8B0000, 0 0 20px #8B0000, 0 0 30px #8B0000;
+                transform: skew(0deg, 0deg);
+            }
+            25% {
+                text-shadow: 0 0 15px #FF0000, 0 0 25px #FF0000, 0 0 35px #FF0000;
+                transform: skew(1deg, -1deg);
+            }
+            50% {
+                text-shadow: 0 0 20px #8B0000, 0 0 30px #8B0000, 0 0 40px #8B0000;
+                transform: skew(-1deg, 1deg);
+            }
+            75% {
+                text-shadow: 0 0 15px #FF4500, 0 0 25px #FF4500, 0 0 35px #FF4500;
+                transform: skew(0.5deg, -0.5deg);
+            }
+            100% {
+                text-shadow: 0 0 10px #8B0000, 0 0 20px #8B0000, 0 0 30px #8B0000;
+                transform: skew(-0.5deg, 0.5deg);
+            }
+        }
+        
+        .halloween .right-panel {
+            animation: halloween-breathing 8s infinite ease-in-out;
+        }
+        
+        @keyframes halloween-breathing {
+            0%, 100% {
+                background: linear-gradient(135deg, #8B0000, #5C0000);
+            }
+            50% {
+                background: linear-gradient(135deg, #5C0000, #8B0000);
+            }
+        }
+        
+        /* =============================================
+           ESTILOS NAVIDAD Y AÑO NUEVO - MEJORADOS
+           ============================================= */
+        
+        .navidad .bg-animation {
+            background: linear-gradient(135deg, #0d0d0d 0%, #1a0a0a 100%);
+        }
+        
+        .navidad .bg-circle {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        
+        .navidad .right-panel::before {
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0) 70%);
+        }
+        
+        /* Copos de nieve modernos */
+        .navidad .snowflake {
+            position: absolute;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.2rem;
+            opacity: 0;
+            animation: snowfall-modern 12s linear infinite;
+            z-index: 1;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+            font-weight: 300;
+        }
+        
+        @keyframes snowfall-modern {
+            0% {
+                transform: translateY(-100px) translateX(0) rotate(0deg);
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.8;
+            }
+            90% {
+                opacity: 0.8;
+            }
+            100% {
+                transform: translateY(100vh) translateX(30px) rotate(360deg);
+                opacity: 0;
+            }
+        }
+        
+        /* Luces navideñas modernas */
+        .navidad .christmas-light {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: christmas-light-modern 3s infinite alternate;
+            z-index: 1;
+            box-shadow: 0 0 15px currentColor;
+            filter: blur(1px);
+        }
+        
+        @keyframes christmas-light-modern {
+            0%, 100% {
+                opacity: 0.4;
+                transform: scale(0.8);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.3);
+            }
+        }
+        
+        /* Estrellas doradas */
+        .navidad .gold-star {
+            position: absolute;
+            color: #FFD700;
+            font-size: 1.5rem;
+            opacity: 0;
+            animation: star-twinkle-modern 4s infinite ease-in-out;
+            z-index: 1;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.7);
+        }
+        
+        @keyframes star-twinkle-modern {
+            0%, 100% {
+                opacity: 0.3;
+                transform: scale(0.8);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.2);
+            }
+        }
+        
+        /* Efecto de texto navideño moderno */
+        .navidad .welcome-message {
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            animation: christmas-text-modern 4s infinite alternate;
+        }
+        
+        @keyframes christmas-text-modern {
+            0% {
+                transform: translateY(0px);
+            }
+            100% {
+                transform: translateY(-5px);
+            }
+        }
+        
+        .navidad .current-time {
+            color: #FFD700;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
+            animation: time-glow-modern 3s infinite alternate;
+            font-weight: 300;
+        }
+        
+        @keyframes time-glow-modern {
+            from {
+                text-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+            }
+            to {
+                text-shadow: 0 0 25px rgba(255, 215, 0, 0.6), 0 0 35px rgba(255, 215, 0, 0.4);
+            }
+        }
+        
+        .navidad .current-date {
+            color: #FFFFFF;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            font-weight: 400;
+        }
+        
+        /* Efecto de respiración navideña moderna */
+        .navidad .right-panel {
+            animation: christmas-breathing-modern 8s infinite ease-in-out;
+            background: linear-gradient(135deg, #B71C1C, #D32F2F, #B71C1C);
+            background-size: 200% 200%;
+        }
+        
+        @keyframes christmas-breathing-modern {
+            0%, 100% {
+                background-position: 0% 50%;
+            }
+            50% {
+                background-position: 100% 50%;
+            }
+        }
+        
+        /* Decoraciones navideñas minimalistas */
+        .navidad .christmas-ornament {
+            position: absolute;
+            width: 25px;
+            height: 25px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #FFD700, #b8860b);
+            animation: ornament-float-modern 10s infinite ease-in-out;
+            z-index: 1;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        @keyframes ornament-float-modern {
+            0%, 100% {
+                transform: translateY(0px) rotate(0deg) scale(1);
+            }
+            33% {
+                transform: translateY(-15px) rotate(120deg) scale(1.1);
+            }
+            66% {
+                transform: translateY(8px) rotate(240deg) scale(0.9);
+            }
+        }
+        
+        /* Cintas decorativas modernas */
+        .navidad .ribbon {
+            position: absolute;
+            width: 100px;
+            height: 40px;
+            background: linear-gradient(45deg, #b8860b, #daa520, #b8860b);
+            transform: rotate(-45deg);
+            animation: ribbon-sway-modern 6s infinite ease-in-out;
+            z-index: 0;
+            opacity: 0.1;
+            box-shadow: 0 2px 10px rgba(184, 134, 11, 0.3);
+        }
+        
+        @keyframes ribbon-sway-modern {
+            0%, 100% {
+                transform: rotate(-45deg) translateX(0px);
+            }
+            50% {
+                transform: rotate(-45deg) translateX(10px);
+            }
+        }
+        
+        /* Fuegos artificiales minimalistas */
+        .navidad .firework {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            animation: firework-explode 1.5s forwards;
+            z-index: 1;
+        }
+        
+        @keyframes firework-explode {
+            0% {
+                transform: translateY(0) scale(0);
+                opacity: 0;
+            }
+            50% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-100px) scale(1);
+                opacity: 0;
+            }
+        }
+        
+        /* Corazones navideños */
+        .navidad .heart {
+            position: absolute;
+            color: #FF6B6B;
+            font-size: 1.2rem;
+            opacity: 0;
+            animation: heart-float 8s linear infinite;
+            z-index: 1;
+            text-shadow: 0 0 10px rgba(255, 107, 107, 0.7);
+        }
+        
+        @keyframes heart-float {
+            0% {
+                transform: translateY(100vh) translateX(0) rotate(0deg);
+                opacity: 0;
+            }
+            10% {
+                opacity: 0.8;
+            }
+            90% {
+                opacity: 0.8;
+            }
+            100% {
+                transform: translateY(-100px) translateX(20px) rotate(360deg);
+                opacity: 0;
+            }
+        }
+        
+        /* Campanas navideñas */
+        .navidad .bell {
+            position: absolute;
+            color: #FFD700;
+            font-size: 1.5rem;
+            opacity: 0;
+            animation: bell-ring 6s infinite ease-in-out;
+            z-index: 1;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.7);
+        }
+        
+        @keyframes bell-ring {
+            0%, 100% {
+                transform: rotate(-10deg);
+                opacity: 0.7;
+            }
+            50% {
+                transform: rotate(10deg);
+                opacity: 1;
+            }
+        }
+        
+        /* Mejoras de compatibilidad para background-clip */
+        .background-clip-text {
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+        
+        /* Mejoras de accesibilidad y contraste */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+        
+        /* Mejoras de contraste para mejor legibilidad */
+        .high-contrast {
+            --primary: #000000;
+            --primary-light: #333333;
+            --primary-dark: #000000;
+            --secondary: #FFFFFF;
+            --secondary-light: #F5F5F5;
+            --secondary-dark: #CCCCCC;
+            --text-dark: #000000;
+            --text-light: #333333;
+        }
+        
+        /* =============================================
+           MEDIA QUERIES PARA RESPONSIVIDAD
+           ============================================= */
+        
+        @media (max-width: 1200px) {
+            .left-panel {
+                padding: 3rem 4rem;
+            }
+            
+            .right-panel {
+                padding: 3rem;
+            }
+            
+            .current-time {
+                font-size: 5.5rem;
+                width: 450px;
+            }
+            
+            .welcome-message {
+                font-size: 2rem;
+            }
+        }
+        
+        @media (max-width: 992px) {
+            .app-container {
+                flex-direction: column;
+                height: auto;
+                min-height: 100vh;
+                overflow: auto;
+            }
+            
+            .left-panel, .right-panel {
+                width: 100%;
+                height: auto;
+                min-height: 50vh;
+                padding: 2.5rem;
+            }
+            
+            .right-panel {
+                order: -1;
+                min-height: 40vh;
+                padding: 2.5rem 1.875rem;
+            }
+            
+            .left-panel {
+                min-height: 60vh;
+            }
+            
+            .current-time {
+                font-size: 4.375rem;
+                width: 375px;
+            }
+            
+            .datetime-container {
+                position: relative;
+                top: auto;
+                transform: none;
+                margin-bottom: 2rem;
+            }
+            
+            .welcome-container {
+                position: relative;
+                bottom: auto;
+                margin-top: 2rem;
+            }
+            
+            .employee-card {
+                width: 90%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+            }
+            
+            .notification {
+                max-width: 312.5px;
+                right: 12.5px;
+                top: 12.5px;
+            }
+            
+            .logo {
+                width: 150px;
+            }
+            
+            .permission-form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+                gap: 0.625rem;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .left-panel {
+                padding: 2rem;
+            }
+            
+            .right-panel {
+                padding: 2rem 1.5rem;
+            }
+            
+            .current-time {
+                font-size: 3.75rem;
+                width: 320px;
+            }
+            
+            .current-date {
+                font-size: 1.5rem;
+            }
+            
+            .welcome-message {
+                font-size: 1.75rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .logo {
+                width: 130px;
+            }
+            
+            input[type="text"], input[type="password"], input[type="time"], select, textarea {
+                font-size: 1.125rem;
+                padding: 0.875rem 1.25rem;
+            }
+            
+            .btn {
+                font-size: 1.125rem;
+                padding: 1.125rem;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .left-panel {
+                padding: 1.5rem;
+            }
+            
+            .right-panel {
+                padding: 1.5rem 1rem;
+            }
+            
+            .current-time {
+                font-size: 3.125rem;
+                width: 280px;
+            }
+            
+            .current-date {
+                font-size: 1.25rem;
+            }
+            
+            .welcome-message {
+                font-size: 1.5rem;
+            }
+            
+            .typing-container {
+                min-height: 4.375rem;
+            }
+            
+            .logo {
+                width: 110px;
+            }
+            
+            .header h1 {
+                font-size: 1.75rem;
+            }
+            
+            .header p {
+                font-size: 1rem;
+            }
+            
+            .employee-photo {
+                width: 100px;
+                height: 100px;
+            }
+            
+            .employee-card {
+                padding: 1.5rem;
+                width: 95%;
+            }
+            
+            .employee-info {
+                grid-template-columns: 1fr;
+                gap: 0.875rem;
+            }
+            
+            .notification {
+                max-width: 90%;
+                right: 5%;
+                top: 12.5px;
+            }
+            
+            .modal {
+                width: 95%;
+            }
+            
+            .modal-header {
+                padding: 1.5rem;
+            }
+            
+            .modal-body {
+                padding: 1.5rem;
+            }
+        }
+        
+        @media (max-width: 400px) {
+            .left-panel {
+                padding: 1rem;
+            }
+            
+            .current-time {
+                font-size: 2.5rem;
+                width: 240px;
+            }
+            
+            .welcome-message {
+                font-size: 1.25rem;
+            }
+            
+            .typing-text {
+                font-size: 0.9rem;
+            }
+            
+            .btn {
+                font-size: 1rem;
+                padding: 1rem;
+            }
+            
+            .action-buttons {
+                gap: 0.5rem;
+            }
+        }
+        
+        /* Asegurar que el diseño sea responsive en orientación landscape */
+        @media (max-height: 600px) and (orientation: landscape) {
+            .app-container {
+                flex-direction: row;
+                height: 100vh;
+            }
+            
+            .left-panel, .right-panel {
+                height: 100vh;
+                min-height: auto;
+            }
+            
+            .left-panel {
+                padding: 1.5rem 2rem;
+            }
+            
+            .right-panel {
+                padding: 1.5rem;
+            }
+            
+            .datetime-container {
+                position: absolute;
+                top: 15%;
+                transform: translateX(-50%);
+            }
+            
+            .welcome-container {
+                position: absolute;
+                bottom: 20%;
+            }
+            
+            .current-time {
+                font-size: 3rem;
+            }
+            
+            .welcome-message {
+                font-size: 1.5rem;
+            }
+        }
+  

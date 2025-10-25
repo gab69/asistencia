@@ -1,14 +1,15 @@
 <?php
-// =============================================
-// CONFIGURACIÓN Y CONEXIÓN A LA BASE DE DATOS
-// =============================================
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'sistema_asistencia');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('APP_TIMEZONE', 'America/Lima');
-define('UNIVERSIDAD_NOMBRE', 'UNIVERSIDAD FRANKLIN ROOSEVELT');
-define('FOTO_DIR', 'fotos_empleados/');
+// Configuración de tiempo de sesión - REACTIVADO EL TIEMPO DE 15 MINUTOS
+ini_set('session.gc_maxlifetime', 900);
+session_set_cookie_params(900);
+
+include 'bd.php';
+// Crear directorio de fotos si no existe
+if (!file_exists(FOTO_DIR)) {
+    mkdir(FOTO_DIR, 0777, true);
+}
+
+date_default_timezone_set(APP_TIMEZONE);
 
 // Definir áreas y cargos preestablecidos
 $AREAS_PREDEFINIDAS = [
@@ -43,7 +44,7 @@ $AREAS_PREDEFINIDAS = [
     'Laboratorio',
     'Limpieza',
     'Logística',
-    'Maintenance',
+    'Mantenimiento',
     'Marketing',
     'Mesa de partes',
     'Otros',
@@ -57,7 +58,6 @@ $AREAS_PREDEFINIDAS = [
     'Vicerrectorado Académico',
     'Vigilancia'
 ];
-
 
 $CARGOS_POR_AREA = [
     'Admisión' => ['Jefe', 'Asistente', 'Apoyo', 'Practicante'],
@@ -106,15 +106,19 @@ $CARGOS_POR_AREA = [
     'Vigilancia' => ['Jefe', 'supervisor', 'operario', 'apoyo']
 ];
 
-// Crear directorio de fotos si no existe
-if (!file_exists(FOTO_DIR)) {
-    mkdir(FOTO_DIR, 0777, true);
-}
-
-date_default_timezone_set(APP_TIMEZONE);
-
 // Verificar sesión de administrador
 session_start();
+
+// VERIFICACIÓN DE TIEMPO DE INACTIVIDAD DE 15 MINUTOS REACTIVADA
+if (isset($_SESSION['LAST_ACTIVITY']) && (time() - $_SESSION['LAST_ACTIVITY'] > 900)) {
+    // Sesión expirada
+    session_unset();
+    session_destroy();
+    header("Location: index.php");
+    exit;
+}
+$_SESSION['LAST_ACTIVITY'] = time(); // Actualizar tiempo de actividad
+
 if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit;
@@ -136,306 +140,1100 @@ try {
 // Verificar permisos según rol
 $isSuperAdmin = ($_SESSION['admin_role'] === 'admin');
 $isSupervisor = ($_SESSION['admin_role'] === 'supervisor');
+$isEspectador = ($_SESSION['admin_role'] === 'espectador'); // NUEVO ROL ESPECTADOR
 
-// Procesar ingreso manual de asistencia (solo para superadmin)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_asistencia']) && $isSuperAdmin) {
+// Obtener configuración del sistema
+function getConfig($clave, $pdo) {
+    $stmt = $pdo->prepare("SELECT valor FROM configuracion_sistema WHERE clave = ?");
+    $stmt->execute([$clave]);
+    $result = $stmt->fetch();
+    return $result ? $result['valor'] : null;
+}
+
+// Actualizar configuración del sistema
+function updateConfig($clave, $valor, $pdo) {
+    $stmt = $pdo->prepare("UPDATE configuracion_sistema SET valor = ? WHERE clave = ?");
+    return $stmt->execute([$valor, $clave]);
+}
+
+// Registrar en el historial
+function registrarHistorial($tabla, $usuarioAfectado, $accion, $campo, $valorAnterior, $valorNuevo, $motivo, $pdo) {
+    $stmt = $pdo->prepare("INSERT INTO historial_cambios (tabla_afectada, usuario_afectado, accion, campo_modificado, valor_anterior, valor_nuevo, motivo, modificado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$tabla, $usuarioAfectado, $accion, $campo, $valorAnterior, $valorNuevo, $motivo, $_SESSION['admin_id']]);
+}
+
+// Procesar agregar empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $dni = $_POST['dni'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $inicio_contrato = $_POST['inicio_contrato'];
+    $fin_contrato = $_POST['fin_contrato'];
+    $tipo_personal = $_POST['tipo_personal'];
+    
+    // Campos de horario (solo para administrativos)
+    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
+    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
+    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
+    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
+    
+    // Procesar foto
+    $foto = null;
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
+        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+        $foto = uniqid() . '.' . $extension;
+        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
+    }
+    
+    try {
+        $stmt = $pdo->prepare("INSERT INTO empleados (dni, nombres, apellidos, area, puesto, inicio_contrato, fin_contrato, tipo_personal, entrada_manana, salida_manana, entrada_tarde, salida_tarde, foto, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', ?)");
+        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        registrarHistorial('empleados', $dni, 'INSERT', 'nuevo_empleado', null, "$apellidos $nombres", "Creación de nuevo empleado", $pdo);
+        
+        $_SESSION['success_message'] = "Empleado agregado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al agregar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar edición de empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $dni = $_POST['dni'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $inicio_contrato = $_POST['inicio_contrato'];
+    $fin_contrato = $_POST['fin_contrato'];
+    $tipo_personal = $_POST['tipo_personal'];
+    
+    // Campos de horario (solo para administrativos)
+    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
+    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
+    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
+    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
+    
+    // Obtener datos anteriores para el historial
+    $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    $empleado_anterior = $stmt->fetch();
+    
+    // Procesar foto
+    $foto = $empleado_anterior['foto'];
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
+        // Eliminar foto anterior si existe
+        if ($foto && file_exists(FOTO_DIR . $foto)) {
+            unlink(FOTO_DIR . $foto);
+        }
+        
+        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+        $foto = uniqid() . '.' . $extension;
+        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
+    }
+    
+    try {
+        $sql = "UPDATE empleados SET dni = ?, nombres = ?, apellidos = ?, area = ?, puesto = ?, inicio_contrato = ?, fin_contrato = ?, tipo_personal = ?, entrada_manana = ?, salida_manana = ?, entrada_tarde = ?, salida_tarde = ?, foto = ? WHERE id = ?";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $empleado_id]);
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($empleado_anterior['dni'] != $dni) {
+            $cambios[] = "dni: {$empleado_anterior['dni']} -> $dni";
+        }
+        if ($empleado_anterior['nombres'] != $nombres) {
+            $cambios[] = "nombres: {$empleado_anterior['nombres']} -> $nombres";
+        }
+        if ($empleado_anterior['apellidos'] != $apellidos) {
+            $cambios[] = "apellidos: {$empleado_anterior['apellidos']} -> $apellidos";
+        }
+        if ($empleado_anterior['area'] != $area) {
+            $cambios[] = "area: {$empleado_anterior['area']} -> $area";
+        }
+        if ($empleado_anterior['puesto'] != $cargo) {
+            $cambios[] = "puesto: {$empleado_anterior['puesto']} -> $cargo";
+        }
+        if ($empleado_anterior['inicio_contrato'] != $inicio_contrato) {
+            $cambios[] = "inicio_contrato: {$empleado_anterior['inicio_contrato']} -> $inicio_contrato";
+        }
+        if ($empleado_anterior['fin_contrato'] != $fin_contrato) {
+            $cambios[] = "fin_contrato: {$empleado_anterior['fin_contrato']} -> $fin_contrato";
+        }
+        if ($empleado_anterior['tipo_personal'] != $tipo_personal) {
+            $cambios[] = "tipo_personal: {$empleado_anterior['tipo_personal']} -> $tipo_personal";
+        }
+        if ($foto != $empleado_anterior['foto']) {
+            $cambios[] = "foto: [actualizada]";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('empleados', $dni, 'UPDATE', 'datos_empleado', $empleado_anterior['dni'], $dni, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Empleado actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar cambio de estado de empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $nuevo_estado = $_POST['nuevo_estado'];
+    
+    try {
+        // Obtener datos anteriores
+        $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
+        $stmt->execute([$empleado_id]);
+        $empleado_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE empleados SET estado = ? WHERE id = ?");
+        $stmt->execute([$nuevo_estado, $empleado_id]);
+        
+        // Registrar en historial
+        registrarHistorial('empleados', $empleado_anterior['dni'], 'UPDATE', 'estado', $empleado_anterior['estado'], $nuevo_estado, "Cambio de estado de empleado", $pdo);
+        
+        $_SESSION['success_message'] = "Estado del empleado actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
+    }
+}
+
+// Procesar ingreso manual de asistencia (solo para superadmin y supervisor)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_asistencia']) && ($isSuperAdmin || $isSupervisor)) {
     $empleado_id = $_POST['empleado_id'];
     $fecha = $_POST['fecha'];
     $hora = $_POST['hora'];
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO registros_asistencia (empleado_id, fecha, hora) VALUES (?, ?, ?)");
-        $stmt->execute([$empleado_id, $fecha, $hora]);
+        $stmt = $pdo->prepare("INSERT INTO registros_asistencia (empleado_id, fecha, hora, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, 'MANUAL')");
+        $stmt->execute([$empleado_id, $fecha, $hora, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
+        $stmtEmpleado->execute([$empleado_id]);
+        $empleado = $stmtEmpleado->fetch();
+        registrarHistorial('registros_asistencia', $empleado['nombre'], 'INSERT', 'asistencia_manual', null, "$fecha $hora", "Registro manual de asistencia", $pdo);
         
         $_SESSION['success_message'] = "Asistencia registrada correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?report_type=consolidated_person");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=daily");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al registrar asistencia: " . $e->getMessage();
     }
 }
 
-// Procesar agregar nuevo empleado (solo para superadmin)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) && $isSuperAdmin) {
-    $dni = trim($_POST['dni']);
-    $nombres = trim($_POST['nombres']);
-    $apellidos = trim($_POST['apellidos']);
-    $area = trim($_POST['area']);
-    $puesto = trim($_POST['puesto']);
-    $inicio_contrato = $_POST['inicio_contrato'];
-    $fin_contrato = $_POST['fin_contrato'];
-    $tipo_personal = $_POST['tipo_personal'];
-    $entrada_manana = $_POST['entrada_manana'] ?? null;
-    $salida_manana = $_POST['salida_manana'] ?? null;
-    $entrada_tarde = $_POST['entrada_tarde'] ?? null;
-    $salida_tarde = $_POST['salida_tarde'] ?? null;
-    
-    // Validar datos obligatorios
-    if (empty($dni) || empty($nombres) || empty($apellidos) || empty($area) || empty($puesto) || 
-        empty($inicio_contrato) || empty($fin_contrato) || empty($tipo_personal)) {
-        $_SESSION['error_message'] = "Todos los campos obligatorios deben ser completados";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
-    }
-    
-    // Procesar foto
-    $foto = null;
-    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        // Validar tipo de archivo
-        $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-        $file_type = $_FILES['foto']['type'];
-        
-        if (in_array($file_type, $allowed_types)) {
-            $ext = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-            $foto = FOTO_DIR . $dni . '.' . $ext;
-            
-            // Mover archivo subido
-            if (!move_uploaded_file($_FILES['foto']['tmp_name'], $foto)) {
-                $_SESSION['error_message'] = "Error al subir la foto";
-                header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-                exit;
-            }
-        } else {
-            $_SESSION['error_message'] = "Formato de imagen no válido. Use JPEG, PNG o GIF";
-            header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-            exit;
-        }
-    }
+// Procesar registro manual de permiso
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_permiso_manual']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $tipo_permiso = $_POST['tipo_permiso'];
+    $motivo = $_POST['motivo'];
+    $fecha_permiso = $_POST['fecha_permiso'];
+    $hora_salida = $_POST['hora_salida'];
+    $hora_retorno = $_POST['hora_retorno'];
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO empleados (dni, nombres, apellidos, area, puesto, inicio_contrato, fin_contrato, tipo_personal, entrada_manana, salida_manana, entrada_tarde, salida_tarde, foto) 
-                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$dni, $nombres, $apellidos, $area, $puesto, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto]);
+        $stmt = $pdo->prepare("INSERT INTO permisos (empleado_id, tipo_permiso, motivo, fecha_permiso, hora_salida, hora_retorno, hora_registro, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, 'MANUAL')");
+        $stmt->execute([$empleado_id, $tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $_SESSION['admin_id']]);
         
-        $_SESSION['success_message'] = "Empleado agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
+        // Registrar en historial
+        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
+        $stmtEmpleado->execute([$empleado_id]);
+        $empleado = $stmtEmpleado->fetch();
+        registrarHistorial('permisos', $empleado['nombre'], 'INSERT', 'permiso_manual', null, "$tipo_permiso - $fecha_permiso", $motivo, $pdo);
+        
+        $_SESSION['success_message'] = "Permiso registrado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
         exit;
     } catch (PDOException $e) {
-        // Eliminar foto si se subió pero falló la inserción
-        if ($foto && file_exists($foto)) {
-            unlink($foto);
-        }
-        
-        // Verificar si es error de duplicado de DNI
-        if (strpos($e->getMessage(), 'Duplicate entry') !== false) {
-            $_SESSION['error_message'] = "Error: El DNI ya existe en el sistema";
-        } else {
-            $_SESSION['error_message'] = "Error al agregar empleado: " . $e->getMessage();
-        }
-        
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
+        $_SESSION['error_message'] = "Error al registrar permiso: " . $e->getMessage();
     }
 }
 
-// Procesar editar empleado (solo para superadmin)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) && $isSuperAdmin) {
-    $id = $_POST['id'];
-    $dni = trim($_POST['dni']);
-    $nombres = trim($_POST['nombres']);
-    $apellidos = trim($_POST['apellidos']);
-    $area = trim($_POST['area']);
-    $puesto = trim($_POST['puesto']);
-    $inicio_contrato = $_POST['inicio_contrato'];
-    $fin_contrato = $_POST['fin_contrato'];
-    $tipo_personal = $_POST['tipo_personal'];
-    $entrada_manana = $_POST['entrada_manana'] ?? null;
-    $salida_manana = $_POST['salida_manana'] ?? null;
-    $entrada_tarde = $_POST['entrada_tarde'] ?? null;
-    $salida_tarde = $_POST['salida_tarde'] ?? null;
-    
-    // Validar datos obligatorios
-    if (empty($dni) || empty($nombres) || empty($apellidos) || empty($area) || empty($puesto) || 
-        empty($inicio_contrato) || empty($fin_contrato) || empty($tipo_personal)) {
-        $_SESSION['error_message'] = "Todos los campos obligatorios deben ser completados";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
-    }
-    
-    // Obtener empleado actual para la foto
-    $stmt = $pdo->prepare("SELECT foto, dni as dni_actual FROM empleados WHERE id = ?");
-    $stmt->execute([$id]);
-    $empleado = $stmt->fetch();
-    $foto = $empleado['foto'];
-    $dni_actual = $empleado['dni_actual'];
-    
-    // Procesar nueva foto si se subió
-    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        // Validar tipo de archivo
-        $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-        $file_type = $_FILES['foto']['type'];
-        
-        if (in_array($file_type, $allowed_types)) {
-            // Eliminar foto anterior si existe
-            if ($foto && file_exists($foto)) {
-                unlink($foto);
-            }
-            
-            $ext = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-            $foto = FOTO_DIR . $dni . '.' . $ext;
-            
-            // Mover archivo subido
-            if (!move_uploaded_file($_FILES['foto']['tmp_name'], $foto)) {
-                $_SESSION['error_message'] = "Error al subir la foto";
-                header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-                exit;
-            }
-        } else {
-            $_SESSION['error_message'] = "Formato de imagen no válido. Use JPEG, PNG o GIF";
-            header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-            exit;
-        }
-    } elseif ($foto && $dni != $dni_actual) {
-        // Si el DNI cambió pero no la foto, renombrar el archivo
-        $ext = pathinfo($foto, PATHINFO_EXTENSION);
-        $nueva_foto = FOTO_DIR . $dni . '.' . $ext;
-        
-        if (rename($foto, $nueva_foto)) {
-            $foto = $nueva_foto;
-        }
-    }
+// Procesar actualización de permiso
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_permiso']) && ($isSuperAdmin || $isSupervisor)) {
+    $permiso_id = $_POST['permiso_id'];
+    $tipo_permiso = $_POST['tipo_permiso'];
+    $motivo = $_POST['motivo'];
+    $fecha_permiso = $_POST['fecha_permiso'];
+    $hora_salida = $_POST['hora_salida'];
+    $hora_retorno = $_POST['hora_retorno'];
     
     try {
-        $stmt = $pdo->prepare("UPDATE empleados SET dni = ?, nombres = ?, apellidos = ?, area = ?, puesto = ?, inicio_contrato = ?, fin_contrato = ?, tipo_personal = ?, entrada_manana = ?, salida_manana = ?, entrada_tarde = ?, salida_tarde = ?, foto = ? WHERE id = ?");
-        $stmt->execute([$dni, $nombres, $apellidos, $area, $puesto, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $id]);
+        // Obtener datos anteriores para el historial
+        $stmt = $pdo->prepare("SELECT * FROM permisos WHERE id = ?");
+        $stmt->execute([$permiso_id]);
+        $permiso_anterior = $stmt->fetch();
         
-        $_SESSION['success_message'] = "Empleado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
+        $stmt = $pdo->prepare("UPDATE permisos SET tipo_permiso = ?, motivo = ?, fecha_permiso = ?, hora_salida = ?, hora_retorno = ? WHERE id = ?");
+        $stmt->execute([$tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $permiso_id]);
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($permiso_anterior['tipo_permiso'] != $tipo_permiso) {
+            $cambios[] = "tipo_permiso: {$permiso_anterior['tipo_permiso']} -> $tipo_permiso";
+        }
+        if ($permiso_anterior['fecha_permiso'] != $fecha_permiso) {
+            $cambios[] = "fecha_permiso: {$permiso_anterior['fecha_permiso']} -> $fecha_permiso";
+        }
+        if ($permiso_anterior['hora_salida'] != $hora_salida) {
+            $cambios[] = "hora_salida: {$permiso_anterior['hora_salida']} -> $hora_salida";
+        }
+        if ($permiso_anterior['hora_retorno'] != $hora_retorno) {
+            $cambios[] = "hora_retorno: {$permiso_anterior['hora_retorno']} -> $hora_retorno";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('permisos', $permiso_anterior['empleado_id'], 'UPDATE', 'datos_permiso', $permiso_anterior['tipo_permiso'], $tipo_permiso, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Permiso actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar empleado: " . $e->getMessage();
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
+        $_SESSION['error_message'] = "Error al actualizar permiso: " . $e->getMessage();
     }
 }
 
-// Procesar eliminar empleado (solo para superadmin)
-if (isset($_GET['eliminar_empleado']) && $isSuperAdmin) {
-    $id = $_GET['eliminar_empleado'];
-    
-    try {
-        // Iniciar transacción para asegurar que todas las operaciones se completen
-        $pdo->beginTransaction();
-        
-        // Obtener foto para eliminarla
-        $stmt = $pdo->prepare("SELECT foto FROM empleados WHERE id = ?");
-        $stmt->execute([$id]);
-        $empleado = $stmt->fetch();
-        
-        // Eliminar registros de asistencia relacionados
-        $stmt = $pdo->prepare("DELETE FROM registros_asistencia WHERE empleado_id = ?");
-        $stmt->execute([$id]);
-        
-        // Eliminar permisos relacionados
-        $stmt = $pdo->prepare("DELETE FROM permisos WHERE empleado_id = ?");
-        $stmt->execute([$id]);
-        
-        // Eliminar empleado
-        $stmt = $pdo->prepare("DELETE FROM empleados WHERE id = ?");
-        $stmt->execute([$id]);
-        
-        // Eliminar foto si existe
-        if ($empleado && $empleado['foto'] && file_exists($empleado['foto'])) {
-            unlink($empleado['foto']);
-        }
-        
-        $pdo->commit();
-        
-        $_SESSION['success_message'] = "Empleado eliminado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
-    } catch (PDOException $e) {
-        $pdo->rollBack();
-        $_SESSION['error_message'] = "Error al eliminar empleado: " . $e->getMessage();
-        header("Location: ".$_SERVER['PHP_SELF']."?section=empleados");
-        exit;
-    }
-}
-
-// Procesar agregar administrador (solo para superadmin)
+// Procesar agregar administrador
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_admin']) && $isSuperAdmin) {
-    $usuario = trim($_POST['usuario']);
-    $contrasena = $_POST['contrasena'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $usuario = $_POST['usuario'];
+    $password = $_POST['password'];
+    
+    // Validar longitud de contraseña (mínimo 4 caracteres)
+    if (strlen($password) < 4) {
+        $_SESSION['error_message'] = "La contraseña debe tener al menos 4 caracteres";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
+        exit;
+    }
+    
+    $password = password_hash($password, PASSWORD_DEFAULT);
     $rol = $_POST['rol'];
     
-    if (empty($usuario) || empty($contrasena) || empty($rol)) {
-        $_SESSION['error_message'] = "Todos los campos deben ser completados";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
-    }
-    
-    $contrasena_hash = password_hash($contrasena, PASSWORD_DEFAULT);
-    
     try {
-        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (usuario, contrasena, rol) VALUES (?, ?, ?)");
-        $stmt->execute([$usuario, $contrasena_hash, $rol]);
+        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (nombres, apellidos, area, cargo, usuario, password, rol, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', ?)");
+        $stmt->execute([$nombres, $apellidos, $area, $cargo, $usuario, $password, $rol, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $usuario, 'INSERT', 'nuevo_admin', null, "$apellidos $nombres", "Creación de nuevo administrador", $pdo);
         
         $_SESSION['success_message'] = "Administrador agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al agregar administrador: " . $e->getMessage();
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
     }
 }
 
-// Procesar editar administrador (solo para superadmin)
+// Procesar actualización de administrador
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_admin']) && $isSuperAdmin) {
-    $id = $_POST['id'];
-    $usuario = trim($_POST['usuario']);
+    $admin_id = $_POST['admin_id'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $usuario = $_POST['usuario'];
     $rol = $_POST['rol'];
     
-    if (empty($usuario) || empty($rol)) {
-        $_SESSION['error_message'] = "Todos los campos deben ser completados";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
+    // Obtener datos anteriores para el historial
+    $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+    $stmt->execute([$admin_id]);
+    $admin_anterior = $stmt->fetch();
+    
+    // Manejar la contraseña (solo actualizar si se proporciona una nueva)
+    $password_update = "";
+    $params = [$nombres, $apellidos, $area, $cargo, $usuario, $rol, $admin_id];
+    
+    if (!empty($_POST['password'])) {
+        $password = $_POST['password'];
+        
+        // Validar longitud de contraseña (mínimo 4 caracteres)
+        if (strlen($password) < 4) {
+            $_SESSION['error_message'] = "La contraseña debe tener al menos 4 caracteres";
+            header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
+            exit;
+        }
+        
+        $password = password_hash($password, PASSWORD_DEFAULT);
+        $password_update = ", password = ?";
+        array_splice($params, 5, 0, [$password]);
     }
     
     try {
-        // Si se proporcionó una nueva contraseña
-        if (!empty($_POST['contrasena'])) {
-            $contrasena = password_hash($_POST['contrasena'], PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, contrasena = ?, rol = ? WHERE id = ?");
-            $stmt->execute([$usuario, $contrasena, $rol, $id]);
-        } else {
-            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, rol = ? WHERE id = ?");
-            $stmt->execute([$usuario, $rol, $id]);
+        $sql = "UPDATE usuarios_admin SET nombres = ?, apellidos = ?, area = ?, cargo = ?, usuario = ?, rol = ? $password_update WHERE id = ?";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($admin_anterior['nombres'] != $nombres) {
+            $cambios[] = "nombres: {$admin_anterior['nombres']} -> $nombres";
+        }
+        if ($admin_anterior['apellidos'] != $apellidos) {
+            $cambios[] = "apellidos: {$admin_anterior['apellidos']} -> $apellidos";
+        }
+        if ($admin_anterior['area'] != $area) {
+            $cambios[] = "area: {$admin_anterior['area']} -> $area";
+        }
+        if ($admin_anterior['cargo'] != $cargo) {
+            $cambios[] = "cargo: {$admin_anterior['cargo']} -> $cargo";
+        }
+        if ($admin_anterior['usuario'] != $usuario) {
+            $cambios[] = "usuario: {$admin_anterior['usuario']} -> $usuario";
+        }
+        if ($admin_anterior['rol'] != $rol) {
+            $cambios[] = "rol: {$admin_anterior['rol']} -> $rol";
+        }
+        if (!empty($_POST['password'])) {
+            $cambios[] = "contraseña: [actualizada]";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'datos_admin', $admin_anterior['usuario'], $usuario, "Cambios: " . implode(', ', $cambios), $pdo);
         }
         
         $_SESSION['success_message'] = "Administrador actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al actualizar administrador: " . $e->getMessage();
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
     }
 }
 
-// Procesar eliminar administrador (solo para superadmin)
-if (isset($_GET['eliminar_admin']) && $isSuperAdmin) {
-    $id = $_GET['eliminar_admin'];
-    
-    // No permitir eliminarse a sí mismo
-    if ($id == $_SESSION['admin_id']) {
-        $_SESSION['error_message'] = "No puedes eliminarte a ti mismo";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
-    }
+// Procesar actualización de configuración
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configuracion']) && $isSuperAdmin) {
+    $minutos_tolerancia = $_POST['minutos_tolerancia'];
     
     try {
-        $stmt = $pdo->prepare("DELETE FROM usuarios_admin WHERE id = ?");
-        $stmt->execute([$id]);
+        $valor_anterior = getConfig('minutos_tolerancia', $pdo);
+        updateConfig('minutos_tolerancia', $minutos_tolerancia, $pdo);
         
-        $_SESSION['success_message'] = "Administrador eliminado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
+        // Registrar en historial
+        registrarHistorial('configuracion_sistema', 'Sistema', 'UPDATE', 'minutos_tolerancia', $valor_anterior, $minutos_tolerancia, "Actualización de minutos de tolerancia", $pdo);
+        
+        $_SESSION['success_message'] = "Configuración actualizada correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=config");
         exit;
     } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al eliminar administrador: " . $e->getMessage();
-        header("Location: ".$_SERVER['PHP_SELF']."?section=administradores");
-        exit;
+        $_SESSION['error_message'] = "Error al actualizar configuración: " . $e->getMessage();
     }
+}
+
+// Procesar cambio de estado de administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_admin']) && $isSuperAdmin) {
+    $admin_id = $_POST['admin_id'];
+    $nuevo_estado = $_POST['nuevo_estado'];
+    
+    try {
+        // Obtener datos anteriores
+        $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+        $stmt->execute([$admin_id]);
+        $admin_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE usuarios_admin SET estado = ? WHERE id = ?");
+        $stmt->execute([$nuevo_estado, $admin_id]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $admin_anterior['usuario'], 'UPDATE', 'estado', $admin_anterior['estado'], $nuevo_estado, "Cambio de estado de administrador", $pdo);
+        
+        $_SESSION['success_message'] = "Estado actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
+    }
+}
+
+// Función para aplicar filtros a los datos
+function aplicarFiltros($data, $filtros) {
+    if (empty($filtros) || empty($data)) {
+        return $data;
+    }
+    
+    return array_filter($data, function($row) use ($filtros) {
+        $pasaFiltro = true;
+        
+        foreach ($filtros as $campo => $valor) {
+            if (!empty($valor)) {
+                $valorFila = '';
+                
+                // Obtener el valor de la fila según el campo
+                switch ($campo) {
+                    case 'area':
+                        $valorFila = $row['area'] ?? '';
+                        break;
+                    case 'cargo':
+                        $valorFila = $row['puesto'] ?? '';
+                        break;
+                    case 'estado':
+                        $valorFila = $row['estado'] ?? '';
+                        break;
+                    case 'busqueda':
+                        $valorFila = strtolower(implode(' ', $row));
+                        break;
+                }
+                
+                if ($campo === 'busqueda') {
+                    if (strpos($valorFila, strtolower($valor)) === false) {
+                        $pasaFiltro = false;
+                        break;
+                    }
+                } else {
+                    if ($valorFila !== $valor) {
+                        $pasaFiltro = false;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return $pasaFiltro;
+    });
+}
+
+// Función para exportar a Excel - SOLO si NO es espectador
+if (isset($_GET['export_excel']) && !$isEspectador) {
+    $section = $_GET['section'] ?? 'dashboard';
+    $reportType = $_GET['report_type'] ?? 'daily';
+    $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
+    $fechaFin = $_GET['fecha_fin'] ?? date('Y-m-d');
+    $exportType = $_GET['export_type'] ?? 'filtered'; // SOLO 'filtered' ahora
+    
+    // Obtener filtros actuales
+    $filtros = [];
+    $filtros['area'] = $_GET['filter_area'] ?? '';
+    $filtros['cargo'] = $_GET['filter_cargo'] ?? '';
+    $filtros['busqueda'] = $_GET['search_term'] ?? '';
+    $filtros['estado'] = $_GET['filter_estado'] ?? '';
+    
+    // Instanciar el generador de reportes
+    $reportGenerator = new ReportGenerator($pdo);
+    
+    // Obtener datos según la sección
+    switch ($section) {
+        case 'dashboard':
+            switch ($reportType) {
+                case 'tardiness':
+                    $data = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin);
+                    $filename = "Reporte_Tardanzas_{$fechaInicio}_al_{$fechaFin}.xls";
+                    break;
+                case 'permission':
+                    $data = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin);
+                    $filename = "Reporte_Permisos_{$fechaInicio}_al_{$fechaFin}.xls";
+                    break;
+                case 'no_asistencia':
+                    $data = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin);
+                    $filename = "Reporte_Sin_Asistencia_{$fechaInicio}_al_{$fechaFin}.xls";
+                    break;
+                case 'areas':
+                    $tipoVista = $_GET['tipo_vista'] ?? 'detallado';
+                    $data = $reportGenerator->getAreaReport($fechaInicio, $fechaFin, $tipoVista);
+                    $filename = "Reporte_Areas_{$fechaInicio}_al_{$fechaFin}.xls";
+                    break;
+                default:
+                    $data = $reportGenerator->getDailyReport($fechaInicio, $fechaFin);
+                    $filename = "Reporte_Diario_{$fechaInicio}_al_{$fechaFin}.xls";
+                    break;
+            }
+            
+            // Aplicar filtros si es exportación filtrada
+            if (!empty($filtros)) {
+                $data = aplicarFiltros($data, $filtros);
+                $filename = "Reporte_Filtrado_" . $filename;
+            }
+            break;
+        case 'admins':
+            $data = $reportGenerator->getAdmins();
+            $filename = "Lista_Administradores.xls";
+            
+            // Aplicar filtros si es exportación filtrada
+            if (!empty($filtros)) {
+                $data = aplicarFiltros($data, $filtros);
+                $filename = "Lista_Administradores_Filtrado.xls";
+            }
+            break;
+        case 'trabajadores':
+            $data = $reportGenerator->getEmployees();
+            $filename = "Lista_Trabajadores.xls";
+            
+            // Aplicar filtros si es exportación filtrada
+            if (!empty($filtros)) {
+                $data = aplicarFiltros($data, $filtros);
+                $filename = "Lista_Trabajadores_Filtrado.xls";
+            }
+            break;
+        case 'history':
+            $historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
+            $historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
+            $historialTabla = $_GET['historial_tabla'] ?? '';
+            $historialAccion = $_GET['historial_accion'] ?? '';
+            $historialCreadoPor = $_GET['historial_creado_por'] ?? '';
+            $data = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor);
+            $filename = "Historial_Cambios_{$historialFechaInicio}_al_{$historialFechaFin}.xls";
+            break;
+        default:
+            exit;
+    }
+    
+    // Generar Excel con formato profesional
+    header("Content-Type: application/vnd.ms-excel");
+    header("Content-Disposition: attachment; filename=\"$filename\"");
+    
+    echo "<html>";
+    echo "<head>";
+    echo "<meta charset='UTF-8'>";
+    echo "<style>";
+    echo "table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }";
+    echo "th { background-color: #8A1538; color: white; font-weight: bold; padding: 8px; border: 1px solid #ddd; text-align: center; }";
+    echo "td { padding: 8px; border: 1px solid #ddd; }";
+    echo ".header-info { background-color: #f2f2f2; padding: 10px; margin-bottom: 20px; border: 1px solid #ddd; }";
+    echo ".university-name { font-size: 18px; font-weight: bold; color: #8A1538; text-align: center; margin-bottom: 10px; }";
+    echo ".report-title { font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 10px; }";
+    echo ".report-info { font-size: 12px; margin-bottom: 5px; }";
+    echo ".total-row { background-color: #e8f5e9; font-weight: bold; }";
+    echo ".total-area-row { background-color: #e3f2fd; font-weight: bold; }";
+    echo ".total-general-row { background-color: #fff8e1; font-weight: bold; }";
+    echo ".footer { margin-top: 20px; font-size: 10px; color: #666; text-align: center; }";
+    echo "</style>";
+    echo "</head>";
+    echo "<body>";
+    
+    // Encabezado profesional
+    echo "<div class='header-info'>";
+    echo "<div class='university-name'>UNIVERSIDAD ROOSEVELT</div>";
+    echo "<div class='report-title'>SISTEMA DE CONTROL DE ASISTENCIA</div>";
+    echo "<div class='report-info'>Fecha de exportación: " . date('d/m/Y H:i:s') . "</div>";
+    echo "<div class='report-info'>Exportado por: " . htmlspecialchars($_SESSION['admin_username']) . "</div>";
+    
+    // Información de filtros aplicados
+    if (!empty($filtros)) {
+        echo "<div class='report-info' style='color: #8A1538; font-weight: bold;'>FILTROS APLICADOS:</div>";
+        foreach ($filtros as $campo => $valor) {
+            if (!empty($valor)) {
+                $nombreCampo = ucfirst(str_replace('_', ' ', $campo));
+                echo "<div class='report-info'>- $nombreCampo: " . htmlspecialchars($valor) . "</div>";
+            }
+        }
+    }
+    
+    switch ($section) {
+        case 'dashboard':
+            echo "<div class='report-info'>Período: $fechaInicio al $fechaFin</div>";
+            switch ($reportType) {
+                case 'tardiness':
+                    echo "<div class='report-info'>Reporte: Tardanzas</div>";
+                    break;
+                case 'permission':
+                    echo "<div class='report-info'>Reporte: Permisos</div>";
+                    break;
+                case 'no_asistencia':
+                    echo "<div class='report-info'>Reporte: Empleados Sin Asistencia</div>";
+                    break;
+                case 'areas':
+                    echo "<div class='report-info'>Reporte: Por Áreas</div>";
+                    break;
+                default:
+                    echo "<div class='report-info'>Reporte: Diario de Asistencia</div>";
+                    break;
+            }
+            break;
+        case 'admins':
+            echo "<div class='report-info'>Reporte: Lista de Administradores</div>";
+            break;
+        case 'trabajadores':
+            echo "<div class='report-info'>Reporte: Lista de Trabajadores</div>";
+            break;
+        case 'history':
+            echo "<div class='report-info'>Reporte: Historial de Cambios</div>";
+            echo "<div class='report-info'>Período: $historialFechaInicio al $historialFechaFin</div>";
+            break;
+    }
+    echo "</div>";
+    
+    switch ($section) {
+        case 'dashboard':
+            switch ($reportType) {
+                case 'tardiness':
+                    echo "<table>";
+                    echo "<tr><th colspan='9' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE TARDANZAS</th></tr>";
+                    echo "<tr>
+                            <th>#</th>
+                            <th>DNI</th>
+                            <th>APELLIDOS</th>
+                            <th>NOMBRES</th>
+                            <th>ÁREA</th>
+                            <th>CARGO</th>
+                            <th>FECHA</th>
+                            <th>TARDANZA MAÑANA</th>
+                            <th>TARDANZA TARDE</th>
+                          </tr>";
+                    
+                    $contador = 1;
+                    $totalTardanzaManana = 0;
+                    $totalTardanzaTarde = 0;
+                    
+                    foreach ($data as $row) {
+                        if (isset($row['es_total']) && $row['es_total']) {
+                            continue;
+                        }
+                        
+                        $tardanzasCombinadas = [];
+                        foreach ($row['tardanzas_manana'] as $tardanza) {
+                            $tardanzasCombinadas[$tardanza['fecha']] = [
+                                'manana' => $tardanza,
+                                'tarde' => null
+                            ];
+                        }
+                        foreach ($row['tardanzas_tarde'] as $tardanza) {
+                            if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
+                                $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
+                            } else {
+                                $tardanzasCombinadas[$tardanza['fecha']] = [
+                                    'manana' => null,
+                                    'tarde' => $tardanza
+                                ];
+                            }
+                        }
+                        
+                        foreach ($tardanzasCombinadas as $fecha => $tardanzas) {
+                            echo "<tr>";
+                            echo "<td>" . $contador++ . "</td>";
+                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
+                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
+                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                            echo "<td>" . $fecha . "</td>";
+                            echo "<td>" . ($tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-') . "</td>";
+                            echo "<td>" . ($tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-') . "</td>";
+                            echo "</tr>";
+                            
+                            if ($tardanzas['manana']) {
+                                $totalTardanzaManana += $tardanzas['manana']['minutos_tardanza'];
+                            }
+                            if ($tardanzas['tarde']) {
+                                $totalTardanzaTarde += $tardanzas['tarde']['minutos_tardanza'];
+                            }
+                        }
+                    }
+                    
+                    // Fila de totales
+                    echo "<tr class='total-general-row'>";
+                    echo "<td colspan='7' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
+                    echo "<td style='font-weight: bold;'>" . minutesToTime($totalTardanzaManana) . "</td>";
+                    echo "<td style='font-weight: bold;'>" . minutesToTime($totalTardanzaTarde) . "</td>";
+                    echo "</tr>";
+                    
+                    echo "</table>";
+                    break;
+                    
+                case 'no_asistencia':
+                    echo "<table>";
+                    echo "<tr><th colspan='9' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE EMPLEADOS SIN ASISTENCIA</th></tr>";
+                    echo "<tr>
+                            <th>#</th>
+                            <th>DNI</th>
+                            <th>APELLIDOS</th>
+                            <th>NOMBRES</th>
+                            <th>ÁREA</th>
+                            <th>CARGO</th>
+                            <th>TURNO</th>
+                            <th>TOTAL FALTAS</th>
+                          </tr>";
+                    
+                    $contador = 1;
+                    $totalFaltasManana = 0;
+                    $totalFaltasTarde = 0;
+                    
+                    foreach ($data as $row) {
+                        if (isset($row['es_total']) && $row['es_total']) {
+                            continue;
+                        }
+                        
+                        if (!empty($row['faltas_manana'])) {
+                            echo "<tr>";
+                            echo "<td>" . $contador++ . "</td>";
+                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
+                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
+                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                            echo "<td>MAÑANA</td>";
+                            echo "<td>" . $row['total_faltas_manana'] . "</td>";
+                            echo "</tr>";
+                            
+                            $totalFaltasManana += $row['total_faltas_manana'];
+                        }
+                        
+                        if (!empty($row['faltas_tarde'])) {
+                            echo "<tr>";
+                            echo "<td>" . $contador++ . "</td>";
+                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
+                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
+                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                            echo "<td>TARDE</td>";
+                            echo "<td>" . $row['total_faltas_tarde'] . "</td>";
+                            echo "</tr>";
+                            
+                            $totalFaltasTarde += $row['total_faltas_tarde'];
+                        }
+                    }
+                    
+                    // Fila de totales
+                    echo "<tr class='total-general-row'>";
+                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
+                    echo "<td style='font-weight: bold;'>MAÑANA</td>";
+                    echo "<td style='font-weight: bold;'>$totalFaltasManana</td>";
+                    echo "</tr>";
+                    echo "<tr class='total-general-row'>";
+                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'></td>";
+                    echo "<td style='font-weight: bold;'>TARDE</td>";
+                    echo "<td style='font-weight: bold;'>$totalFaltasTarde</td>";
+                    echo "</tr>";
+                    echo "<tr class='total-general-row'>";
+                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'></td>";
+                    echo "<td style='font-weight: bold;'>TOTAL GENERAL</td>";
+                    echo "<td style='font-weight: bold;'>" . ($totalFaltasManana + $totalFaltasTarde) . "</td>";
+                    echo "</tr>";
+                    
+                    echo "</table>";
+                    break;
+                    
+                case 'permission':
+                    echo "<table>";
+                    echo "<tr><th colspan='14' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE PERMISOS</th></tr>";
+                    echo "<tr>
+                            <th>#</th>
+                            <th>DNI</th>
+                            <th>APELLIDOS</th>
+                            <th>NOMBRES</th>
+                            <th>ÁREA</th>
+                            <th>CARGO</th>
+                            <th>FECHA</th>
+                            <th>TIPO PERMISO</th>
+                            <th>MOTIVO</th>
+                            <th>SALIDA</th>
+                            <th>RETORNO</th>
+                            <th>REGISTRO</th>
+                            <th>REGISTRADO POR</th>
+                          </tr>";
+                    
+                    $contador = 1;
+                    $totalPermisos = 0;
+                    $tiposPermiso = [];
+                    
+                    foreach ($data as $row) {
+                        echo "<tr>";
+                        echo "<td>" . $contador++ . "</td>";
+                        echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
+                        echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
+                        echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                        echo "<td>" . $row['fecha_permiso'] . "</td>";
+                        echo "<td>" . htmlspecialchars($row['tipo_permiso']) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['motivo']) . "</td>";
+                        echo "<td>" . $row['hora_salida'] . "</td>";
+                        echo "<td>" . $row['hora_retorno'] . "</td>";
+                        echo "<td>" . $row['hora_registro'] . "</td>";
+                        echo "<td>" . htmlspecialchars($row['registrado_por']) . "</td>";
+                        echo "</tr>";
+                        
+                        $totalPermisos++;
+                        $tipo = $row['tipo_permiso'];
+                        if (!isset($tiposPermiso[$tipo])) {
+                            $tiposPermiso[$tipo] = 0;
+                        }
+                        $tiposPermiso[$tipo]++;
+                    }
+                    
+                    // Fila de totales
+                    echo "<tr class='total-general-row'>";
+                    echo "<td colspan='7' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
+                    echo "<td colspan='6' style='font-weight: bold;'>";
+                    foreach ($tiposPermiso as $tipo => $cantidad) {
+                        echo "$tipo: $cantidad | ";
+                    }
+                    echo "TOTAL: $totalPermisos";
+                    echo "</td>";
+                    echo "</tr>";
+                    
+                    echo "</table>";
+                    break;
+                    
+                case 'areas':
+                    echo "<table>";
+                    echo "<tr><th colspan='8' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE POR ÁREAS</th></tr>";
+                    echo "<tr>
+                            <th>ÁREA</th>
+                            <th>CARGO</th>
+                            <th>EMPLEADOS</th>
+                            <th>DÍAS</th>
+                            <th>ASISTENCIAS</th>
+                            <th>PERMISOS</th>
+                            <th>FALTAS</th>
+                            <th>% ASISTENCIA</th>
+                          </tr>";
+                    
+                    foreach ($data as $row) {
+                        $class = '';
+                        if (isset($row['es_total_area']) && $row['es_total_area']) {
+                            $class = 'total-area-row';
+                        } elseif ($row['area'] === 'TOTAL GENERAL') {
+                            $class = 'total-general-row';
+                        }
+                        
+                        echo "<tr class='$class'>";
+                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                        echo "<td>" . $row['empleados'] . "</td>";
+                        echo "<td>" . $row['dias_totales'] . "</td>";
+                        echo "<td>" . $row['asistencias'] . "</td>";
+                        echo "<td>" . $row['permisos'] . "</td>";
+                        echo "<td>" . $row['faltas'] . "</td>";
+                        echo "<td>" . $row['porcentaje_asistencia'] . "%</td>";
+                        echo "</tr>";
+                    }
+                    
+                    echo "</table>";
+                    break;
+                    
+                default: // daily
+                    echo "<table>";
+                    echo "<tr><th colspan='14' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DIARIO DE ASISTENCIA</th></tr>";
+                    echo "<tr>
+                            <th>#</th>
+                            <th>FECHA</th>
+                            <th>DNI</th>
+                            <th>APELLIDOS</th>
+                            <th>NOMBRES</th>
+                            <th>ÁREA</th>
+                            <th>CARGO</th>
+                            <th>ENT. MAÑANA</th>
+                            <th>SAL. MAÑANA</th>
+                            <th>ENT. TARDE</th>
+                            <th>SAL. TARDE</th>
+                            <th>REGISTROS</th>
+                            <th>REGISTRADO POR</th>
+                          </tr>";
+                    
+                    $contador = 1;
+                    foreach ($data as $row) {
+                        echo "<tr>";
+                        echo "<td>" . $contador++ . "</td>";
+                        echo "<td>" . $row['fecha'] . "</td>";
+                        echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
+                        echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
+                        echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
+                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
+                        
+                        echo "<td>" . (!empty($row['registros_entrada_manana']) ? min($row['registros_entrada_manana']) : '-') . "</td>";
+                        echo "<td>" . (!empty($row['registros_salida_manana']) ? min($row['registros_salida_manana']) : '-') . "</td>";
+                        echo "<td>" . (!empty($row['registros_entrada_tarde']) ? min($row['registros_entrada_tarde']) : '-') . "</td>";
+                        echo "<td>" . (!empty($row['registros_salida_tarde']) ? min($row['registros_salida_tarde']) : '-') . "</td>";
+                        
+                        echo "<td>";
+                        if (!empty($row['todos_registros'])) {
+                            foreach ($row['todos_registros'] as $registro) {
+                                echo $registro . "<br>";
+                            }
+                        } else {
+                            echo "-";
+                        }
+                        echo "</td>";
+                        
+                        echo "<td>";
+                        if (!empty($row['todos_registradores'])) {
+                            foreach ($row['todos_registradores'] as $registrador) {
+                                echo htmlspecialchars($registrador) . "<br>";
+                            }
+                        } else {
+                            echo "-";
+                        }
+                        echo "</td>";
+                        echo "</tr>";
+                    }
+                    echo "</table>";
+                    break;
+            }
+            break;
+            
+        case 'admins':
+            echo "<table>";
+            echo "<tr><th colspan='12' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>LISTA DE ADMINISTRADORES</th></tr>";
+            echo "<tr>
+                    <th>#</th>
+                    <th>APELLIDOS</th>
+                    <th>NOMBRES</th>
+                    <th>ÁREA</th>
+                    <th>CARGO</th>
+                    <th>USUARIO</th>
+                    <th>ROL</th>
+                    <th>ESTADO</th>
+                    <th>FECHA CREACIÓN</th>
+                    <th>HORA</th>
+                    <th>CREADO POR</th>
+                    <th>ACCIONES</th>
+                  </tr>";
+            
+            $contador = 1;
+            foreach ($data as $admin) {
+                echo "<tr>";
+                echo "<td>" . $contador++ . "</td>";
+                echo "<td>" . htmlspecialchars($admin['apellidos']) . "</td>";
+                echo "<td>" . htmlspecialchars($admin['nombres']) . "</td>";
+                echo "<td>" . htmlspecialchars($admin['area']) . "</td>";
+                echo "<td>" . htmlspecialchars($admin['cargo']) . "</td>";
+                echo "<td>" . htmlspecialchars($admin['usuario']) . "</td>";
+                echo "<td>" . ($admin['rol'] === 'admin' ? 'Administrador' : ($admin['rol'] === 'supervisor' ? 'Supervisor' : 'Espectador')) . "</td>";
+                echo "<td>" . ($admin['estado'] === 'activo' ? 'Activo' : 'Inactivo') . "</td>";
+                echo "<td>" . date('d/m/Y', strtotime($admin['fecha_creacion'])) . "</td>";
+                echo "<td>" . date('H:i:s', strtotime($admin['fecha_creacion'])) . "</td>";
+                echo "<td>" . htmlspecialchars($admin['creado_por_nombre']) . "</td>";
+                echo "<td>";
+                if ($isSuperAdmin && $admin['id'] != $_SESSION['admin_id']) {
+                    echo "<button type='button' class='btn btn-secondary btn-sm' onclick='openEditAdminModal(" . $admin['id'] . ")'>";
+                    echo "<i class='fas fa-edit'></i> Editar";
+                    echo "</button>";
+                    echo "<form method='post' style='display: inline; margin-left: 5px;'>";
+                    echo "<input type='hidden' name='admin_id' value='" . $admin['id'] . "'>";
+                    echo "<input type='hidden' name='nuevo_estado' value='" . ($admin['estado'] === 'activo' ? 'inactivo' : 'activo') . "'>";
+                    echo "<button type='submit' name='cambiar_estado_admin' class='btn btn-" . ($admin['estado'] === 'activo' ? 'warning' : 'success') . " btn-sm'>";
+                    echo "<i class='fas fa-" . ($admin['estado'] === 'activo' ? 'pause' : 'play') . "'></i>";
+                    echo $admin['estado'] === 'activo' ? ' Desactivar' : ' Activar';
+                    echo "</button>";
+                    echo "</form>";
+                }
+                echo "</td>";
+                echo "</tr>";
+            }
+            echo "</table>";
+            break;
+            
+        case 'trabajadores':
+            echo "<table>";
+            echo "<tr><th colspan='10' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>LISTA DE TRABAJADORES</th></tr>";
+            echo "<tr>
+                    <th>#</th>
+                    <th>FOTO</th>
+                    <th>DNI</th>
+                    <th>APELLIDOS</th>
+                    <th>NOMBRES</th>
+                    <th>ÁREA</th>
+                    <th>CARGO</th>
+                    <th>ESTADO</th>
+                    <th>CREADO POR</th>
+                    <th>ACCIONES</th>
+                  </tr>";
+            
+            $contador = 1;
+            foreach ($data as $empleado) {
+                echo "<tr>";
+                echo "<td>" . $contador++ . "</td>";
+                echo "<td>";
+                if (!empty($empleado['foto']) && file_exists(FOTO_DIR . $empleado['foto'])) {
+                    echo "<img src='" . FOTO_DIR . $empleado['foto'] . "' style='width: 50px; height: 50px; border-radius: 50%; object-fit: cover;'>";
+                } else {
+                    echo "<div style='width: 50px; height: 50px; border-radius: 50%; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center;'>";
+                    echo "<i class='fas fa-user' style='color: #666;'></i>";
+                    echo "</div>";
+                }
+                echo "</td>";
+                echo "<td>" . htmlspecialchars($empleado['dni']) . "</td>";
+                echo "<td>" . htmlspecialchars($empleado['apellidos']) . "</td>";
+                echo "<td>" . htmlspecialchars($empleado['nombres']) . "</td>";
+                echo "<td>" . htmlspecialchars($empleado['area']) . "</td>";
+                echo "<td>" . htmlspecialchars($empleado['puesto']) . "</td>";
+                echo "<td>";
+                echo "<span class='badge " . ($empleado['estado'] === 'activo' ? 'badge-success' : 'badge-danger') . "'>";
+                echo $empleado['estado'] === 'activo' ? 'Activo' : 'Inactivo';
+                echo "</span>";
+                echo "</td>";
+                echo "<td>" . htmlspecialchars($empleado['creado_por_nombre']) . "</td>";
+                echo "<td>";
+                if ($isSuperAdmin || $isSupervisor) {
+                    echo "<button type='button' class='btn btn-secondary btn-sm' onclick='openEditEmpleadoModal(" . $empleado['id'] . ")'>";
+                    echo "<i class='fas fa-edit'></i> Editar";
+                    echo "</button>";
+                    echo "<form method='post' style='display: inline; margin-left: 5px;'>";
+                    echo "<input type='hidden' name='empleado_id' value='" . $empleado['id'] . "'>";
+                    echo "<input type='hidden' name='nuevo_estado' value='" . ($empleado['estado'] === 'activo' ? 'inactivo' : 'activo') . "'>";
+                    echo "<button type='submit' name='cambiar_estado_empleado' class='btn btn-" . ($empleado['estado'] === 'activo' ? 'warning' : 'success') . " btn-sm'>";
+                    echo "<i class='fas fa-" . ($empleado['estado'] === 'activo' ? 'pause' : 'play') . "'></i>";
+                    echo $empleado['estado'] === 'activo' ? ' Desactivar' : ' Activar';
+                    echo "</button>";
+                    echo "</form>";
+                }
+                echo "</td>";
+                echo "</tr>";
+            }
+            echo "</table>";
+            break;
+            
+        case 'history':
+            echo "<table>";
+            echo "<tr><th colspan='11' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>HISTORIAL DE CAMBIOS</th></tr>";
+            echo "<tr>
+                    <th>#</th>
+                    <th>TABLA AFECTADA</th>
+                    <th>USUARIO AFECTADO</th>
+                    <th>ACCION</th>
+                    <th>CAMPO MODIFICADO</th>
+                    <th>VALOR ANTERIOR</th>
+                    <th>VALOR NUEVO</th>
+                    <th>MOTIVO</th>
+                    <th>MODIFICADO POR</th>
+                    <th>FECHA MODIFICACION</th>
+                    <th>HORA MODIFICACION</th>
+                  </tr>";
+            
+            $contador = 1;
+            foreach ($data as $historial) {
+                echo "<tr>";
+                echo "<td>" . $contador++ . "</td>";
+                echo "<td>" . htmlspecialchars($historial['tabla_afectada']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['usuario_afectado']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['accion']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['campo_modificado']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['valor_anterior']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['valor_nuevo']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['motivo']) . "</td>";
+                echo "<td>" . htmlspecialchars($historial['modificado_por_nombre']) . "</td>";
+                echo "<td>" . date('d/m/Y', strtotime($historial['fecha_modificacion'])) . "</td>";
+                echo "<td>" . date('H:i:s', strtotime($historial['fecha_modificacion'])) . "</td>";
+                echo "</tr>";
+            }
+            echo "</table>";
+            break;
+    }
+    
+    // Pie de página
+    echo "<div class='footer'>";
+    echo "Documento generado automáticamente por el Sistema de Control de Asistencia - Universidad Roosevelt<br>";
+    echo "Fecha y hora de generación: " . date('d/m/Y H:i:s');
+    echo "</div>";
+    
+    echo "</body>";
+    echo "</html>";
+    exit;
 }
 
 // Clase para generar reportes
@@ -447,572 +1245,16 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene reporte diario de asistencia
-     */
-    public function getDailyReport($fechaInicio, $fechaFin, $area = null, $cargo = null, $tipoPersonal = null, $busqueda = null) {
-        $params = [$fechaInicio, $fechaFin];
-        $where = "WHERE r.fecha BETWEEN ? AND ?";
-        
-        if ($area) {
-            $where .= " AND e.area = ?";
-            $params[] = $area;
-        }
-        
-        if ($cargo) {
-            $where .= " AND e.puesto = ?";
-            $params[] = $cargo;
-        }
-        
-        if ($tipoPersonal) {
-            $where .= " AND e.tipo_personal = ?";
-            $params[] = $tipoPersonal;
-        }
-        
-        if ($busqueda) {
-            $where .= " AND (e.dni LIKE ? OR CONCAT(e.nombres, ' ', e.apellidos) LIKE ?)";
-            $params[] = "%$busqueda%";
-            $params[] = "%$busqueda%";
-        }
-        
-        $sql = "SELECT 
-                    e.id, e.dni, 
-                    CONCAT(e.nombres, ' ', e.apellidos) AS nombre_completo,
-                    e.area, e.puesto, e.tipo_personal,
-                    e.entrada_manana, e.salida_manana, e.entrada_tarde, e.salida_tarde,
-                    r.fecha,
-                    GROUP_CONCAT(DISTINCT TIME(r.hora) ORDER BY r.hora SEPARATOR '|') AS registros
-                FROM empleados e
-                LEFT JOIN registros_asistencia r ON e.id = r.empleado_id
-                $where
-                GROUP BY e.id, r.fecha
-                ORDER BY r.fecha, e.area, e.apellidos, e.nombres";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        $result = $stmt->fetchAll();
-        
-        // Procesar los registros para aplicar los criterios horarios
-        foreach ($result as &$row) {
-            $registros = explode('|', $row['registros'] ?? '');
-            $row['registros_dia'] = [];
-            $row['entrada_manana_reg'] = null;
-            $row['salida_manana_reg'] = null;
-            $row['entrada_tarde_reg'] = null;
-            $row['salida_tarde_reg'] = null;
-            
-            foreach ($registros as $hora) {
-                if (empty($hora)) continue;
-                
-                $horaTime = strtotime($hora);
-                
-                // Solo para personal administrativo
-                if ($row['tipo_personal'] === 'Administrativo') {
-                    // Entrada mañana (1:00 AM - Salida mañana)
-                    if ($horaTime >= strtotime('01:00:00') && $horaTime < strtotime($row['salida_manana'])) {
-                        if (!$row['entrada_manana_reg'] || $horaTime < strtotime($row['entrada_manana_reg'])) {
-                            $row['entrada_manana_reg'] = $hora;
-                        }
-                    }
-                    
-                    // Salida mañana (Salida mañana - 15:00)
-                    if ($horaTime >= strtotime($row['salida_manana']) && $horaTime < strtotime('15:00:00')) {
-                        if (!$row['salida_manana_reg'] || $horaTime > strtotime($row['salida_manana_reg'])) {
-                            $row['salida_manana_reg'] = $hora;
-                        }
-                    }
-                    
-                    // Entrada tarde (15:00 - Salida tarde)
-                    if ($horaTime >= strtotime('15:00:00') && $horaTime < strtotime($row['salida_tarde'])) {
-                        if (!$row['entrada_tarde_reg'] || $horaTime < strtotime($row['entrada_tarde_reg'])) {
-                            $row['entrada_tarde_reg'] = $hora;
-                        }
-                    }
-                    
-                    // Salida tarde (Salida tarde - 23:59)
-                    if ($horaTime >= strtotime($row['salida_tarde']) && $horaTime <= strtotime('23:59:59')) {
-                        if (!$row['salida_tarde_reg'] || $horaTime > strtotime($row['salida_tarde_reg'])) {
-                            $row['salida_tarde_reg'] = $hora;
-                        }
-                    }
-                }
-                
-                $row['registros_dia'][] = $hora;
-            }
-            
-            unset($row['registros']);
-        }
-        
-        return $result;
-    }
-    
-    /**
-     * Obtiene reporte de tardanzas
-     */
-    public function getTardinessReport($fechaInicio, $fechaFin, $area = null, $cargo = null, $tipoPersonal = null, $busqueda = null) {
-        $params = [$fechaInicio, $fechaFin];
-        $where = "WHERE r.fecha BETWEEN ? AND ? AND e.tipo_personal = 'Administrativo'";
-        
-        if ($area) {
-            $where .= " AND e.area = ?";
-            $params[] = $area;
-        }
-        
-        if ($cargo) {
-            $where .= " AND e.puesto = ?";
-            $params[] = $cargo;
-        }
-        
-        if ($busqueda) {
-            $where .= " AND (e.dni LIKE ? OR CONCAT(e.nombres, ' ', e.apellidos) LIKE ?)";
-            $params[] = "%$busqueda%";
-            $params[] = "%$busqueda%";
-        }
-        
-        $sql = "SELECT 
-                    e.id, e.dni, 
-                    CONCAT(e.nombres, ' ', e.apellidos) AS nombre_completo,
-                    e.area, e.puesto, e.tipo_personal,
-                    e.entrada_manana, e.salida_manana, e.entrada_tarde, e.salida_tarde,
-                    r.fecha, TIME(r.hora) AS hora
-                FROM empleados e
-                JOIN registros_asistencia r ON e.id = r.empleado_id
-                $where
-                ORDER BY e.area, e.apellidos, e.nombres, r.fecha, r.hora";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        $registros = $stmt->fetchAll();
-        
-        // Procesamos los registros para calcular tardanzas
-        $result = [];
-        $currentEmpleado = null;
-        $currentFecha = null;
-        
-        foreach ($registros as $reg) {
-            // Si cambiamos de empleado, inicializamos
-            if (!$currentEmpleado || $currentEmpleado['id'] != $reg['id']) {
-                if ($currentEmpleado) {
-                    $result[] = $currentEmpleado;
-                }
-                
-                $currentEmpleado = [
-                    'id' => $reg['id'],
-                    'dni' => $reg['dni'],
-                    'nombre_completo' => $reg['nombre_completo'],
-                    'area' => $reg['area'],
-                    'puesto' => $reg['puesto'],
-                    'tipo_personal' => $reg['tipo_personal'],
-                    'entrada_manana' => $reg['entrada_manana'],
-                    'salida_manana' => $reg['salida_manana'],
-                    'entrada_tarde' => $reg['entrada_tarde'],
-                    'salida_tarde' => $reg['salida_tarde'],
-                    'tardanzas_manana' => [],
-                    'tardanzas_tarde' => []
-                ];
-                $currentFecha = null;
-            }
-            
-            // Si cambiamos de fecha, reiniciamos el control para el empleado
-            if (!$currentFecha || $currentFecha != $reg['fecha']) {
-                $currentFecha = $reg['fecha'];
-                $mananaRegistrada = false;
-                $tardeRegistrada = false;
-            }
-            
-            $horaRegistro = strtotime($reg['hora']);
-            $horaEntradaManana = strtotime($reg['entrada_manana']);
-            $horaEntradaTarde = strtotime($reg['entrada_tarde']);
-            
-            // Verificar tardanza mañana (solo primera vez que registra en el rango)
-            if (!$mananaRegistrada && $horaRegistro >= $horaEntradaManana && $horaRegistro < strtotime($reg['salida_manana'])) {
-                $segundosTardanza = max(0, ($horaRegistro - $horaEntradaManana - 300)); // 5 minutos de tolerancia
-                if ($segundosTardanza > 0) {
-                    $minutos = floor($segundosTardanza / 60);
-                    $segundos = $segundosTardanza % 60;
-                    $tardanzaFormato = sprintf("%02d:%02d", $minutos, $segundos);
-                    
-                    $currentEmpleado['tardanzas_manana'][] = [
-                        'fecha' => $reg['fecha'],
-                        'hora_entrada' => $reg['entrada_manana'],
-                        'hora_marcada' => $reg['hora'],
-                        'tardanza' => $tardanzaFormato
-                    ];
-                }
-                $mananaRegistrada = true;
-            }
-            
-            // Verificar tardanza tarde (solo primera vez que registra en el rango)
-            if (!$tardeRegistrada && $horaRegistro >= $horaEntradaTarde && $horaRegistro < strtotime($reg['salida_tarde'])) {
-                $segundosTardanza = max(0, ($horaRegistro - $horaEntradaTarde - 300)); // 5 minutos de tolerancia
-                if ($segundosTardanza > 0) {
-                    $minutos = floor($segundosTardanza / 60);
-                    $segundos = $segundosTardanza % 60;
-                    $tardanzaFormato = sprintf("%02d:%02d", $minutos, $segundos);
-                    
-                    $currentEmpleado['tardanzas_tarde'][] = [
-                        'fecha' => $reg['fecha'],
-                        'hora_entrada' => $reg['entrada_tarde'],
-                        'hora_marcada' => $reg['hora'],
-                        'tardanza' => $tardanzaFormato
-                    ];
-                }
-                $tardeRegistrada = true;
-            }
-        }
-        
-        // Añadir el último empleado procesado
-        if ($currentEmpleado) {
-            $result[] = $currentEmpleado;
-        }
-        
-        return $result;
-    }
-    
-    /**
-     * Obtiene reporte de permisos
-     */
-    public function getPermissionReport($fechaInicio, $fechaFin, $area = null, $cargo = null, $tipoPersonal = null, $busqueda = null) {
-        $params = [$fechaInicio, $fechaFin];
-        $where = "WHERE p.fecha_permiso BETWEEN ? AND ?";
-        
-        if ($area) {
-            $where .= " AND e.area = ?";
-            $params[] = $area;
-        }
-        
-        if ($cargo) {
-            $where .= " AND e.puesto = ?";
-            $params[] = $cargo;
-        }
-        
-        if ($tipoPersonal) {
-            $where .= " AND e.tipo_personal = ?";
-            $params[] = $tipoPersonal;
-        }
-        
-        if ($busqueda) {
-            $where .= " AND (e.dni LIKE ? OR CONCAT(e.nombres, ' ', e.apellidos) LIKE ?)";
-            $params[] = "%$busqueda%";
-            $params[] = "%$busqueda%";
-        }
-        
-        $sql = "SELECT 
-                    p.id, p.fecha_permiso, p.tipo_permiso, p.motivo, 
-                    p.hora_salida, p.hora_retorno, p.hora_registro,
-                    e.id AS empleado_id, e.dni, 
-                    CONCAT(e.nombres, ' ', e.apellidos) AS nombre_completo,
-                    e.area, e.puesto, e.tipo_personal
-                FROM permisos p
-                JOIN empleados e ON p.empleado_id = e.id
-                $where
-                ORDER BY p.fecha_permiso, e.area, e.apellidos, e.nombres";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll();
-    }
-    
-    /**
-     * Obtiene reporte consolidado por áreas
-     */
-    public function getConsolidatedAreaReport($fechaInicio, $fechaFin) {
-        // Obtenemos todos los días en el rango (incluyendo sábados y domingos)
-        $dias = $this->getAllDays($fechaInicio, $fechaFin);
-        $totalDias = count($dias);
-        
-        // Obtenemos todas las áreas
-        $areas = $this->getAreas();
-        $result = [];
-        
-        foreach ($areas as $area) {
-            // Obtenemos empleados por área
-            $sqlEmpleados = "SELECT id, puesto, tipo_personal FROM empleados WHERE area = ?";
-            $stmtEmp = $this->pdo->prepare($sqlEmpleados);
-            $stmtEmp->execute([$area]);
-            $empleados = $stmtEmp->fetchAll();
-            
-            if (empty($empleados)) continue;
-            
-            // Agrupar por cargo
-            $cargos = [];
-            foreach ($empleados as $emp) {
-                $cargos[$emp['puesto']] = ($cargos[$emp['puesto']] ?? 0) + 1;
-            }
-            
-            // IDs de empleados para usar en las consultas
-            $empleadosIds = array_column($empleados, 'id');
-            $placeholders = implode(',', array_fill(0, count($empleadosIds), '?'));
-            
-            // Calculamos asistencias por área
-            $sqlAsistencias = "SELECT COUNT(DISTINCT CONCAT(empleado_id, '|', fecha)) 
-                               FROM registros_asistencia 
-                               WHERE empleado_id IN ($placeholders)
-                               AND fecha BETWEEN ? AND ?";
-            $stmtAsist = $this->pdo->prepare($sqlAsistencias);
-            $stmtAsist->execute(array_merge($empleadosIds, [$fechaInicio, $fechaFin]));
-            $totalAsistencias = $stmtAsist->fetchColumn();
-            
-            // Calculamos permisos por área
-            $sqlPermisos = "SELECT COUNT(DISTINCT CONCAT(empleado_id, '|', fecha_permiso)) 
-                            FROM permisos 
-                            WHERE empleado_id IN ($placeholders)
-                            AND fecha_permiso BETWEEN ? AND ?";
-            $stmtPerm = $this->pdo->prepare($sqlPermisos);
-            $stmtPerm->execute(array_merge($empleadosIds, [$fechaInicio, $fechaFin]));
-            $totalPermisos = $stmtPerm->fetchColumn();
-            
-            // Calculamos tardanzas por área (solo para administrativos)
-            $sqlTardanzas = "SELECT COUNT(*) FROM (
-                                SELECT ra.empleado_id, ra.fecha, MIN(TIME(ra.hora)) as hora
-                                FROM registros_asistencia ra
-                                JOIN empleados e ON ra.empleado_id = e.id
-                                WHERE ra.empleado_id IN ($placeholders)
-                                AND ra.fecha BETWEEN ? AND ?
-                                AND e.tipo_personal = 'Administrativo'
-                                GROUP BY ra.empleado_id, ra.fecha
-                            ) AS tardanzas";
-            $stmtTard = $this->pdo->prepare($sqlTardanzas);
-            $stmtTard->execute(array_merge($empleadosIds, [$fechaInicio, $fechaFin]));
-            $totalTardanzas = $stmtTard->fetchColumn();
-            
-            // Calculamos faltas (días - asistencias, sin considerar permisos)
-            $totalFaltas = ($totalDias * count($empleados)) - $totalAsistencias;
-            
-            foreach ($cargos as $cargo => $cantidad) {
-                $result[] = [
-                    'area' => $area,
-                    'cargo' => $cargo,
-                    'total_empleados' => $cantidad,
-                    'total_dias' => $totalDias,
-                    'total_asistencias' => round($totalAsistencias * ($cantidad / count($empleados))),
-                    'total_permisos' => round($totalPermisos * ($cantidad / count($empleados))),
-                    'total_tardanzas' => round($totalTardanzas * ($cantidad / count($empleados))),
-                    'total_faltas' => round($totalFaltas * ($cantidad / count($empleados))),
-                    'porcentaje_asistencia' => round(($totalAsistencias / ($totalDias * count($empleados))) * 100, 2)
-                ];
-            }
-        }
-        
-        return $result;
-    }
-    
-    /**
-     * Obtiene reporte consolidado por persona
-     */
-    public function getConsolidatedPersonReport($fechaInicio, $fechaFin, $area = null, $cargo = null, $tipoPersonal = null, $busqueda = null) {
-        // Obtenemos todos los días en el rango (incluyendo sábados y domingos)
-        $dias = $this->getAllDays($fechaInicio, $fechaFin);
-        $totalDias = count($dias);
-        
-        // Obtenemos empleados con filtros
-        $params = [];
-        $where = "WHERE 1=1";
-        
-        if ($area) {
-            $where .= " AND area = ?";
-            $params[] = $area;
-        }
-        
-        if ($cargo) {
-            $where .= " AND puesto = ?";
-            $params[] = $cargo;
-        }
-        
-        if ($tipoPersonal) {
-            $where .= " AND tipo_personal = ?";
-            $params[] = $tipoPersonal;
-        }
-        
-        if ($busqueda) {
-            $where .= " AND (dni LIKE ? OR CONCAT(nombres, ' ', apellidos) LIKE ?)";
-            $params[] = "%$busqueda%";
-            $params[] = "%$busqueda%";
-        }
-        
-        $sql = "SELECT 
-                    id, dni, CONCAT(nombres, ' ', apellidos) AS nombre_completo, 
-                    area, puesto, tipo_personal
-                FROM empleados $where ORDER BY area, apellidos, nombres";
-        
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        $empleados = $stmt->fetchAll();
-        
-        $result = [];
-        foreach ($empleados as $empleado) {
-            // Asistencias
-            $sqlAsistencias = "SELECT COUNT(DISTINCT fecha) FROM registros_asistencia 
-                              WHERE empleado_id = ? AND fecha BETWEEN ? AND ?";
-            $stmtAsist = $this->pdo->prepare($sqlAsistencias);
-            $stmtAsist->execute([$empleado['id'], $fechaInicio, $fechaFin]);
-            $asistencias = $stmtAsist->fetchColumn();
-            
-            // Permisos
-            $sqlPermisos = "SELECT COUNT(DISTINCT fecha_permiso) FROM permisos 
-                           WHERE empleado_id = ? AND fecha_permiso BETWEEN ? AND ?";
-            $stmtPerm = $this->pdo->prepare($sqlPermisos);
-            $stmtPerm->execute([$empleado['id'], $fechaInicio, $fechaFin]);
-            $permisos = $stmtPerm->fetchColumn();
-            
-            // Tardanzas (solo para administrativos)
-            $tardanzas = 0;
-            if ($empleado['tipo_personal'] === 'Administrativo') {
-                $sqlTardanzas = "SELECT COUNT(*) FROM (
-                                    SELECT ra.empleado_id, ra.fecha, MIN(TIME(ra.hora)) as hora
-                                    FROM registros_asistencia ra
-                                    JOIN empleados e ON ra.empleado_id = e.id
-                                    WHERE ra.empleado_id = ?
-                                    AND ra.fecha BETWEEN ? AND ?
-                                    AND e.tipo_personal = 'Administrativo'
-                                    GROUP BY ra.empleado_id, ra.fecha
-                                ) AS tardanzas";
-                $stmtTard = $this->pdo->prepare($sqlTardanzas);
-                $stmtTard->execute([$empleado['id'], $fechaInicio, $fechaFin]);
-                $tardanzas = $stmtTard->fetchColumn();
-            }
-            
-            // Faltas (días - asistencias, sin considerar permisos)
-            $faltas = $totalDias - $asistencias;
-            
-            $result[] = [
-                'id' => $empleado['id'],
-                'dni' => $empleado['dni'],
-                'nombre_completo' => $empleado['nombre_completo'],
-                'area' => $empleado['area'],
-                'puesto' => $empleado['puesto'],
-                'tipo_personal' => $empleado['tipo_personal'],
-                'total_dias' => $totalDias,
-                'asistencias' => $asistencias,
-                'permisos' => $permisos,
-                'faltas' => $faltas,
-                'tardanzas' => $tardanzas,
-                'porcentaje_asistencia' => round(($asistencias / $totalDias) * 100, 2),
-                'detalle_asistencias' => $this->getAttendanceDetail($empleado['id'], $fechaInicio, $fechaFin)
-            ];
-        }
-        
-        return $result;
-    }
-    
-    /**
-     * Obtiene detalle de asistencia por persona
-     */
-    public function getAttendanceDetail($empleadoId, $fechaInicio, $fechaFin) {
-        // Obtenemos todos los días en el rango
-        $dias = $this->getAllDays($fechaInicio, $fechaFin);
-        
-        // Obtenemos los registros de asistencia
-        $sqlAsistencias = "SELECT fecha, TIME(hora) as hora FROM registros_asistencia 
-                          WHERE empleado_id = ? AND fecha BETWEEN ? AND ?
-                          ORDER BY fecha, hora";
-        $stmtAsist = $this->pdo->prepare($sqlAsistencias);
-        $stmtAsist->execute([$empleadoId, $fechaInicio, $fechaFin]);
-        $asistencias = $stmtAsist->fetchAll();
-        
-        // Obtenemos los permisos
-        $sqlPermisos = "SELECT fecha_permiso, tipo_permiso FROM permisos 
-                       WHERE empleado_id = ? AND fecha_permiso BETWEEN ? AND ?";
-        $stmtPerm = $this->pdo->prepare($sqlPermisos);
-        $stmtPerm->execute([$empleadoId, $fechaInicio, $fechaFin]);
-        $permisos = $stmtPerm->fetchAll();
-        
-        // Obtenemos datos del empleado
-        $sqlEmpleado = "SELECT tipo_personal FROM empleados WHERE id = ?";
-        $stmtEmp = $this->pdo->prepare($sqlEmpleado);
-        $stmtEmp->execute([$empleadoId]);
-        $empleado = $stmtEmp->fetch();
-        
-        // Procesamos cada día
-        $detalle = [];
-        foreach ($dias as $dia) {
-            $registrosDia = array_filter($asistencias, function($a) use ($dia) {
-                return $a['fecha'] == $dia;
-            });
-            
-            $permisoDia = array_filter($permisos, function($p) use ($dia) {
-                return $p['fecha_permiso'] == $dia;
-            });
-            
-            $item = [
-                'fecha' => $dia,
-                'tipo' => 'Asistencia',
-                'registros' => array_column($registrosDia, 'hora'),
-                'permiso' => null
-            ];
-            
-            // Verificar si tiene permiso
-            if (!empty($permisoDia)) {
-                $permiso = reset($permisoDia);
-                $item['tipo'] = 'Permiso';
-                $item['permiso'] = $permiso['tipo_permiso'];
-            } 
-            // Verificar si es falta
-            elseif (empty($registrosDia)) {
-                $item['tipo'] = 'Falta';
-            }
-            
-            $detalle[] = $item;
-        }
-        
-        return $detalle;
-    }
-    
-    /**
-     * Obtiene lista de todos los días entre dos fechas (incluyendo sábados y domingos)
-     */
-    private function getAllDays($startDate, $endDate) {
-        $start = new DateTime($startDate);
-        $end = new DateTime($endDate);
-        $end->modify('+1 day'); // Incluir el día final
-        
-        $days = [];
-        $interval = new DateInterval('P1D');
-        $period = new DatePeriod($start, $interval, $end);
-        
-        foreach ($period as $date) {
-            $days[] = $date->format('Y-m-d');
-        }
-        
-        return $days;
-    }
-    
-    /**
-     * Obtiene lista de áreas
-     */
-    public function getAreas() {
-        $stmt = $this->pdo->query("SELECT DISTINCT area FROM empleados ORDER BY area");
-        return $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
-    }
-    
-    /**
-     * Obtiene lista de cargos
-     */
-    public function getPositions() {
-        $stmt = $this->pdo->query("SELECT DISTINCT puesto FROM empleados ORDER BY puesto");
-        return $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
-    }
-    
-    /**
-     * Obtiene lista de tipos de personal
-     */
-    public function getPersonalTypes() {
-        $stmt = $this->pdo->query("SELECT DISTINCT tipo_personal FROM empleados ORDER BY tipo_personal");
-        return $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
-    }
-    
-    /**
-     * Obtiene lista de empleados para el select
+     * Obtiene lista de empleados/trabajadores
      */
     public function getEmployees() {
-        $stmt = $this->pdo->query("SELECT id, dni, nombres, apellidos, CONCAT(nombres, ' ', apellidos) AS nombre_completo FROM empleados WHERE nombres IS NOT NULL AND apellidos IS NOT NULL ORDER BY apellidos, nombres");
-        return $stmt->fetchAll();
-    }
-    
-    /**
-     * Obtiene lista completa de empleados con todos los datos
-     */
-    public function getAllEmployees() {
-        $stmt = $this->pdo->query("SELECT * FROM empleados WHERE nombres IS NOT NULL AND apellidos IS NOT NULL ORDER BY apellidos, nombres");
+        $stmt = $this->pdo->query("
+            SELECT e.id, e.dni, e.nombres, e.apellidos, e.area, e.puesto, e.estado, e.foto, e.tipo_personal, e.inicio_contrato, e.fin_contrato,
+                   COALESCE(ua.usuario, 'SISTEMA') AS creado_por_nombre
+            FROM empleados e 
+            LEFT JOIN usuarios_admin ua ON e.creado_por = ua.id 
+            ORDER BY e.apellidos, e.nombres
+        ");
         return $stmt->fetchAll();
     }
     
@@ -1026,25 +1268,593 @@ class ReportGenerator {
     }
     
     /**
-     * Busca empleados por término (para el autocompletado)
+     * Obtiene reporte diario de asistencia
      */
-    public function searchEmployees($term) {
-        $stmt = $this->pdo->prepare("SELECT id, dni, CONCAT(nombres, ' ', apellidos) AS nombre_completo 
-                                    FROM empleados 
-                                    WHERE (dni LIKE ? OR CONCAT(nombres, ' ', apellidos) LIKE ?)
-                                    AND nombres IS NOT NULL 
-                                    AND apellidos IS NOT NULL
-                                    ORDER BY apellidos, nombres
-                                    LIMIT 10");
-        $stmt->execute(["%$term%", "%$term%"]);
+    public function getDailyReport($fechaInicio, $fechaFin) {
+        $params = [$fechaInicio, $fechaFin];
+        
+        $sql = "SELECT 
+                    e.id, e.dni, 
+                    CONCAT(e.apellidos, ' ', e.nombres) AS nombre_completo,
+                    e.area, e.puesto, e.tipo_personal,
+                    e.entrada_manana, e.salida_manana, e.entrada_tarde, e.salida_tarde,
+                    r.fecha,
+                    TIME(r.hora) AS hora,
+                    CASE 
+                        WHEN r.tipo_registro = 'SISTEMA' THEN 'SISTEMA'
+                        ELSE COALESCE(ua.usuario, 'SISTEMA')
+                    END AS registrado_por
+                FROM empleados e
+                LEFT JOIN registros_asistencia r ON e.id = r.empleado_id
+                LEFT JOIN usuarios_admin ua ON r.registrado_por = ua.id
+                WHERE r.fecha BETWEEN ? AND ?
+                ORDER BY r.fecha, e.area, e.apellidos, e.nombres, r.hora";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetchAll();
+        
+        // Agrupar por empleado y fecha y clasificar registros
+        $groupedData = [];
+        foreach ($result as $row) {
+            $key = $row['id'] . '_' . $row['fecha'];
+            if (!isset($groupedData[$key])) {
+                $groupedData[$key] = [
+                    'id' => $row['id'],
+                    'dni' => $row['dni'],
+                    'nombre_completo' => $row['nombre_completo'],
+                    'area' => $row['area'],
+                    'puesto' => $row['puesto'],
+                    'tipo_personal' => $row['tipo_personal'],
+                    'entrada_manana' => $row['entrada_manana'],
+                    'salida_manana' => $row['salida_manana'],
+                    'entrada_tarde' => $row['entrada_tarde'],
+                    'salida_tarde' => $row['salida_tarde'],
+                    'fecha' => $row['fecha'],
+                    'registros_entrada_manana' => [],
+                    'registros_salida_manana' => [],
+                    'registros_entrada_tarde' => [],
+                    'registros_salida_tarde' => [],
+                    'todos_registros' => [],
+                    'todos_registradores' => []
+                ];
+            }
+            
+            if ($row['hora']) {
+                // Clasificar el registro según el horario
+                $horaRegistro = $row['hora'];
+                $salidaManana = $row['salida_manana'] ?: '13:00:00';
+                $entradaTarde = $row['entrada_tarde'] ?: '14:00:00';
+                $salidaTarde = $row['salida_tarde'] ?: '18:00:00';
+                
+                if ($horaRegistro <= $salidaManana) {
+                    $groupedData[$key]['registros_entrada_manana'][] = $horaRegistro;
+                } elseif ($horaRegistro <= '14:30:00') {
+                    $groupedData[$key]['registros_salida_manana'][] = $horaRegistro;
+                } elseif ($horaRegistro <= $salidaTarde) {
+                    $groupedData[$key]['registros_entrada_tarde'][] = $horaRegistro;
+                } else {
+                    $groupedData[$key]['registros_salida_tarde'][] = $horaRegistro;
+                }
+                
+                // Agregar a todos los registros y registradores
+                $groupedData[$key]['todos_registros'][] = $horaRegistro;
+                $groupedData[$key]['todos_registradores'][] = $row['registrado_por'];
+            }
+        }
+        
+        return array_values($groupedData);
+    }
+    
+    /**
+     * Obtiene empleados que no marcaron asistencia en un rango de fechas
+     */
+    public function getEmployeesWithoutAttendance($fechaInicio, $fechaFin) {
+        // Obtener todos los empleados activos
+        $sql = "SELECT 
+                    e.id, e.dni, 
+                    CONCAT(e.apellidos, ' ', e.nombres) AS nombre_completo,
+                    e.area, e.puesto, e.tipo_personal,
+                    e.entrada_manana, e.salida_manana, e.entrada_tarde, e.salida_tarde
+                FROM empleados e
+                WHERE e.estado = 'activo'
+                ORDER BY e.area, e.apellidos, e.nombres";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute();
+        $empleados = $stmt->fetchAll();
+        
+        // Obtener días con asistencia por empleado
+        $sqlAsistencias = "SELECT empleado_id, DATE(fecha) as fecha, TIME(hora) as hora
+                          FROM registros_asistencia 
+                          WHERE fecha BETWEEN ? AND ?
+                          ORDER BY empleado_id, fecha, hora";
+        $stmtAsist = $this->pdo->prepare($sqlAsistencias);
+        $stmtAsist->execute([$fechaInicio, $fechaFin]);
+        $asistencias = $stmtAsist->fetchAll();
+        
+        // Obtener permisos por empleado
+        $sqlPermisos = "SELECT empleado_id, fecha_permiso 
+                       FROM permisos 
+                       WHERE fecha_permiso BETWEEN ? AND ?";
+        $stmtPerm = $this->pdo->prepare($sqlPermisos);
+        $stmtPerm->execute([$fechaInicio, $fechaFin]);
+        $permisos = $stmtPerm->fetchAll();
+        
+        // Organizar asistencias y permisos por empleado y fecha
+        $asistenciasPorEmpleado = [];
+        $permisosPorEmpleado = [];
+        
+        foreach ($asistencias as $asistencia) {
+            $empleadoId = $asistencia['empleado_id'];
+            $fecha = $asistencia['fecha'];
+            $hora = $asistencia['hora'];
+            
+            if (!isset($asistenciasPorEmpleado[$empleadoId])) {
+                $asistenciasPorEmpleado[$empleadoId] = [];
+            }
+            if (!isset($asistenciasPorEmpleado[$empleadoId][$fecha])) {
+                $asistenciasPorEmpleado[$empleadoId][$fecha] = [];
+            }
+            $asistenciasPorEmpleado[$empleadoId][$fecha][] = $hora;
+        }
+        
+        foreach ($permisos as $permiso) {
+            $empleadoId = $permiso['empleado_id'];
+            $fecha = $permiso['fecha_permiso'];
+            if (!isset($permisosPorEmpleado[$empleadoId])) {
+                $permisosPorEmpleado[$empleadoId] = [];
+            }
+            $permisosPorEmpleado[$empleadoId][$fecha] = true;
+        }
+        
+        // Generar lista de fechas en el rango
+        $fechas = [];
+        $start = new DateTime($fechaInicio);
+        $end = new DateTime($fechaFin);
+        $interval = new DateInterval('P1D');
+        $period = new DatePeriod($start, $interval, $end->modify('+1 day'));
+        
+        foreach ($period as $date) {
+            $fechas[] = $date->format('Y-m-d');
+        }
+        
+        // Encontrar empleados sin asistencia
+        $result = [];
+        $totalFaltasManana = 0;
+        $totalFaltasTarde = 0;
+        
+        foreach ($empleados as $empleado) {
+            $empleadoId = $empleado['id'];
+            $faltasManana = [];
+            $faltasTarde = [];
+            
+            foreach ($fechas as $fecha) {
+                // Verificar si el empleado no tiene asistencia ni permiso en esta fecha
+                $tieneAsistencia = isset($asistenciasPorEmpleado[$empleadoId][$fecha]);
+                $tienePermiso = isset($permisosPorEmpleado[$empleadoId][$fecha]);
+                
+                if (!$tieneAsistencia && !$tienePermiso) {
+                    // Sin asistencia todo el día
+                    $faltasManana[] = $fecha;
+                    $faltasTarde[] = $fecha;
+                } elseif ($tieneAsistencia && !$tienePermiso) {
+                    // Tiene asistencia, verificar turnos
+                    $horas = $asistenciasPorEmpleado[$empleadoId][$fecha];
+                    $tieneManana = false;
+                    $tieneTarde = false;
+                    
+                    foreach ($horas as $hora) {
+                        if ($hora <= '13:00:00') {
+                            $tieneManana = true;
+                        }
+                        if ($hora >= '14:00:00' && $hora <= '23:59:59') {
+                            $tieneTarde = true;
+                        }
+                    }
+                    
+                    if (!$tieneManana) {
+                        $faltasManana[] = $fecha;
+                    }
+                    if (!$tieneTarde) {
+                        $faltasTarde[] = $fecha;
+                    }
+                }
+            }
+            
+            if (!empty($faltasManana) || !empty($faltasTarde)) {
+                $empleado['faltas_manana'] = $faltasManana;
+                $empleado['faltas_tarde'] = $faltasTarde;
+                $empleado['total_faltas_manana'] = count($faltasManana);
+                $empleado['total_faltas_tarde'] = count($faltasTarde);
+                $result[] = $empleado;
+                
+                $totalFaltasManana += count($faltasManana);
+                $totalFaltasTarde += count($faltasTarde);
+            }
+        }
+        
+        // Agregar fila de totales (solo 1 fila)
+        $result[] = [
+            'es_total' => true,
+            'total_faltas_manana' => $totalFaltasManana,
+            'total_faltas_tarde' => $totalFaltasTarde,
+            'total_general' => $totalFaltasManana + $totalFaltasTarde
+        ];
+        
+        return $result;
+    }
+    
+    /**
+     * Obtiene reporte de permisos
+     */
+    public function getPermissionReport($fechaInicio, $fechaFin) {
+        $params = [$fechaInicio, $fechaFin];
+        
+        $sql = "SELECT 
+                    p.id, p.fecha_permiso, p.tipo_permiso, p.motivo, 
+                    p.hora_salida, p.hora_retorno, p.hora_registro,
+                    CASE 
+                        WHEN p.tipo_registro = 'SISTEMA' THEN 'SISTEMA'
+                        ELSE COALESCE(ua.usuario, 'SISTEMA')
+                    END AS registrado_por,
+                    e.id AS empleado_id, e.dni, 
+                    CONCAT(e.apellidos, ' ', e.nombres) AS nombre_completo,
+                    e.area, e.puesto, e.tipo_personal
+                FROM permisos p
+                JOIN empleados e ON p.empleado_id = e.id
+                LEFT JOIN usuarios_admin ua ON p.registrado_por = ua.id
+                WHERE p.fecha_permiso BETWEEN ? AND ?
+                ORDER BY p.fecha_permiso, e.area, e.apellidos, e.nombres";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
     
     /**
-     * Obtiene lista de administradores
+     * Obtiene totales por tipo de permiso
+     */
+    public function getPermissionTotals($fechaInicio, $fechaFin) {
+        $params = [$fechaInicio, $fechaFin];
+        
+        $sql = "SELECT 
+                    p.tipo_permiso, 
+                    COUNT(*) as total
+                FROM permisos p
+                JOIN empleados e ON p.empleado_id = e.id
+                WHERE p.fecha_permiso BETWEEN ? AND ?
+                GROUP BY p.tipo_permiso
+                ORDER BY total DESC";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Obtiene un permiso por ID
+     */
+    public function getPermissionById($id) {
+        $stmt = $this->pdo->prepare("SELECT * FROM permisos WHERE id = ?");
+        $stmt->execute([$id]);
+        return $stmt->fetch();
+    }
+    
+    /**
+     * Obtiene reporte de tardanzas
+     */
+    public function getTardinessReport($fechaInicio, $fechaFin) {
+        $minutosTolerancia = getConfig('minutos_tolerancia', $this->pdo) ?: 5;
+        
+        // Obtener el reporte diario para calcular tardanzas
+        $dailyReport = $this->getDailyReport($fechaInicio, $fechaFin);
+        
+        $result = [];
+        $totalTardanzaManana = 0;
+        $totalTardanzaTarde = 0;
+        
+        foreach ($dailyReport as $empleado) {
+            // Solo procesar empleados administrativos
+            if ($empleado['tipo_personal'] !== 'Administrativo') {
+                continue;
+            }
+            
+            $tardanzas = [
+                'id' => $empleado['id'],
+                'dni' => $empleado['dni'],
+                'nombre_completo' => $empleado['nombre_completo'],
+                'area' => $empleado['area'],
+                'puesto' => $empleado['puesto'],
+                'tipo_personal' => $empleado['tipo_personal'],
+                'entrada_manana' => $empleado['entrada_manana'],
+                'entrada_tarde' => $empleado['entrada_tarde'],
+                'tardanzas_manana' => [],
+                'tardanzas_tarde' => [],
+                'minutos_tolerancia' => $minutosTolerancia
+            ];
+            
+            // Procesar tardanzas de la mañana
+            if (!empty($empleado['registros_entrada_manana']) && $empleado['entrada_manana']) {
+                $primerRegistroManana = min($empleado['registros_entrada_manana']);
+                $horaEntradaManana = new DateTime($empleado['entrada_manana']);
+                $horaRegistroManana = new DateTime($primerRegistroManana);
+                
+                $diferencia = $horaEntradaManana->diff($horaRegistroManana);
+                $minutosTardanza = ($diferencia->h * 60) + $diferencia->i;
+                
+                // Aplicar tolerancia
+                $minutosTardanza = max(0, $minutosTardanza - $minutosTolerancia);
+                
+                if ($minutosTardanza > 0) {
+                    $horas = floor($minutosTardanza / 60);
+                    $minutos = $minutosTardanza % 60;
+                    
+                    $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
+                    
+                    $tardanzas['tardanzas_manana'][] = [
+                        'fecha' => $empleado['fecha'],
+                        'hora_entrada' => $empleado['entrada_manana'],
+                        'hora_marcada' => $primerRegistroManana,
+                        'tardanza' => $tardanzaFormato,
+                        'minutos_tardanza' => $minutosTardanza
+                    ];
+                    
+                    $totalTardanzaManana += $minutosTardanza;
+                }
+            }
+            
+            // Procesar tardanzas de la tarde
+            if (!empty($empleado['registros_entrada_tarde']) && $empleado['entrada_tarde']) {
+                $primerRegistroTarde = min($empleado['registros_entrada_tarde']);
+                $horaEntradaTarde = new DateTime($empleado['entrada_tarde']);
+                $horaRegistroTarde = new DateTime($primerRegistroTarde);
+                
+                $diferencia = $horaEntradaTarde->diff($horaRegistroTarde);
+                $minutosTardanza = ($diferencia->h * 60) + $diferencia->i;
+                
+                // Aplicar tolerancia
+                $minutosTardanza = max(0, $minutosTardanza - $minutosTolerancia);
+                
+                if ($minutosTardanza > 0) {
+                    $horas = floor($minutosTardanza / 60);
+                    $minutos = $minutosTardanza % 60;
+                    
+                    $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
+                    
+                    $tardanzas['tardanzas_tarde'][] = [
+                        'fecha' => $empleado['fecha'],
+                        'hora_entrada' => $empleado['entrada_tarde'],
+                        'hora_marcada' => $primerRegistroTarde,
+                        'tardanza' => $tardanzaFormato,
+                        'minutos_tardanza' => $minutosTardanza
+                    ];
+                    
+                    $totalTardanzaTarde += $minutosTardanza;
+                }
+            }
+            
+            // Solo agregar si tiene tardanzas
+            if (!empty($tardanzas['tardanzas_manana']) || !empty($tardanzas['tardanzas_tarde'])) {
+                $result[] = $tardanzas;
+            }
+        }
+        
+        // Calcular totales
+        $totalTardanza = $totalTardanzaManana + $totalTardanzaTarde;
+        
+        // Convertir minutos a formato HH:MM
+        $result[] = [
+            'total_tardanza_manana' => $this->minutesToTime($totalTardanzaManana),
+            'total_tardanza_tarde' => $this->minutesToTime($totalTardanzaTarde),
+            'total_tardanza' => $this->minutesToTime($totalTardanza),
+            'es_total' => true
+        ];
+        
+        return $result;
+    }
+    
+    /**
+     * Convierte minutos a formato HH:MM
+     */
+    private function minutesToTime($minutes) {
+        $horas = floor($minutes / 60);
+        $minutos = $minutes % 60;
+        return sprintf("%02d:%02d", $horas, $minutos);
+    }
+    
+    /**
+     * Obtiene reporte por áreas - CORREGIDO
+     */
+    public function getAreaReport($fechaInicio, $fechaFin, $tipoVista = 'detallado') {
+        // Obtener todos los empleados activos
+        $sqlEmpleados = "SELECT id, area, puesto, tipo_personal, estado 
+                        FROM empleados 
+                        WHERE estado = 'activo' 
+                        ORDER BY area, puesto";
+        $stmtEmpleados = $this->pdo->prepare($sqlEmpleados);
+        $stmtEmpleados->execute();
+        $empleados = $stmtEmpleados->fetchAll();
+        
+        // Obtener total de días en el rango
+        $start = new DateTime($fechaInicio);
+        $end = new DateTime($fechaFin);
+        $diasTotales = $end->diff($start)->days + 1;
+        
+        // Obtener asistencias por empleado
+        $sqlAsistencias = "SELECT e.id, COUNT(DISTINCT DATE(r.fecha)) as asistencias
+                          FROM empleados e
+                          LEFT JOIN registros_asistencia r ON e.id = r.empleado_id AND r.fecha BETWEEN ? AND ?
+                          WHERE e.estado = 'activo'
+                          GROUP BY e.id";
+        $stmtAsist = $this->pdo->prepare($sqlAsistencias);
+        $stmtAsist->execute([$fechaInicio, $fechaFin]);
+        $asistencias = $stmtAsist->fetchAll();
+        
+        // Obtener permisos por empleado
+        $sqlPermisos = "SELECT e.id, COUNT(DISTINCT p.fecha_permiso) as permisos
+                       FROM empleados e
+                       LEFT JOIN permisos p ON e.id = p.empleado_id AND p.fecha_permiso BETWEEN ? AND ?
+                       WHERE e.estado = 'activo'
+                       GROUP BY e.id";
+        $stmtPerm = $this->pdo->prepare($sqlPermisos);
+        $stmtPerm->execute([$fechaInicio, $fechaFin]);
+        $permisos = $stmtPerm->fetchAll();
+        
+        // Organizar datos por área y cargo
+        $areaData = [];
+        $totalGeneral = [
+            'area' => 'TOTAL GENERAL',
+            'puesto' => '',
+            'empleados' => 0,
+            'dias_totales' => 0,
+            'asistencias' => 0,
+            'permisos' => 0,
+            'faltas' => 0,
+            'porcentaje_asistencia' => 0
+        ];
+        
+        // Crear estructura de datos por área y cargo
+        foreach ($empleados as $empleado) {
+            $area = $empleado['area'];
+            $puesto = $empleado['puesto'];
+            $key = $area . '_' . $puesto;
+            
+            if (!isset($areaData[$key])) {
+                $areaData[$key] = [
+                    'area' => $area,
+                    'puesto' => $puesto,
+                    'empleados' => 0,
+                    'dias_totales' => 0,
+                    'asistencias' => 0,
+                    'permisos' => 0,
+                    'faltas' => 0,
+                    'porcentaje_asistencia' => 0
+                ];
+            }
+            
+            $areaData[$key]['empleados']++;
+            $areaData[$key]['dias_totales'] += $diasTotales;
+            $totalGeneral['empleados']++;
+            $totalGeneral['dias_totales'] += $diasTotales;
+        }
+        
+        // Procesar asistencias
+        $asistenciasPorEmpleado = [];
+        foreach ($asistencias as $asist) {
+            $asistenciasPorEmpleado[$asist['id']] = $asist['asistencias'];
+        }
+        
+        // Procesar permisos
+        $permisosPorEmpleado = [];
+        foreach ($permisos as $perm) {
+            $permisosPorEmpleado[$perm['id']] = $perm['permisos'];
+        }
+        
+        // Calcular asistencias y permisos por área y cargo
+        foreach ($empleados as $empleado) {
+            $area = $empleado['area'];
+            $puesto = $empleado['puesto'];
+            $key = $area . '_' . $puesto;
+            
+            $asistenciasEmpleado = $asistenciasPorEmpleado[$empleado['id']] ?? 0;
+            $permisosEmpleado = $permisosPorEmpleado[$empleado['id']] ?? 0;
+            
+            $areaData[$key]['asistencias'] += $asistenciasEmpleado;
+            $areaData[$key]['permisos'] += $permisosEmpleado;
+            $totalGeneral['asistencias'] += $asistenciasEmpleado;
+            $totalGeneral['permisos'] += $permisosEmpleado;
+        }
+        
+        // Calcular faltas y porcentajes
+        foreach ($areaData as $key => &$data) {
+            $data['faltas'] = $data['dias_totales'] - $data['asistencias'] - $data['permisos'];
+            $data['porcentaje_asistencia'] = $data['dias_totales'] > 0 ? 
+                round(($data['asistencias'] / $data['dias_totales']) * 100, 2) : 0;
+        }
+        
+        $totalGeneral['faltas'] = $totalGeneral['dias_totales'] - $totalGeneral['asistencias'] - $totalGeneral['permisos'];
+        $totalGeneral['porcentaje_asistencia'] = $totalGeneral['dias_totales'] > 0 ? 
+            round(($totalGeneral['asistencias'] / $totalGeneral['dias_totales']) * 100, 2) : 0;
+        
+        // Agregar totales por área
+        $areaTotals = [];
+        foreach ($areaData as $key => $data) {
+            $area = $data['area'];
+            if (!isset($areaTotals[$area])) {
+                $areaTotals[$area] = [
+                    'area' => $area,
+                    'puesto' => 'TOTAL ' . $area,
+                    'empleados' => 0,
+                    'dias_totales' => 0,
+                    'asistencias' => 0,
+                    'permisos' => 0,
+                    'faltas' => 0,
+                    'porcentaje_asistencia' => 0,
+                    'es_total_area' => true
+                ];
+            }
+            
+            $areaTotals[$area]['empleados'] += $data['empleados'];
+            $areaTotals[$area]['dias_totales'] += $data['dias_totales'];
+            $areaTotals[$area]['asistencias'] += $data['asistencias'];
+            $areaTotals[$area]['permisos'] += $data['permisos'];
+            $areaTotals[$area]['faltas'] += $data['faltas'];
+        }
+        
+        // Calcular porcentajes para totales por área
+        foreach ($areaTotals as &$totalArea) {
+            $totalArea['porcentaje_asistencia'] = $totalArea['dias_totales'] > 0 ? 
+                round(($totalArea['asistencias'] / $totalArea['dias_totales']) * 100, 2) : 0;
+        }
+        
+        // Convertir a array y agregar totales
+        $result = array_values($areaData);
+        
+        // Insertar totales por área después de cada área
+        $finalResult = [];
+        $currentArea = '';
+        
+        foreach ($result as $row) {
+            if ($row['area'] !== $currentArea) {
+                if ($currentArea !== '') {
+                    // Agregar total del área anterior
+                    $finalResult[] = $areaTotals[$currentArea];
+                }
+                $currentArea = $row['area'];
+            }
+            $finalResult[] = $row;
+        }
+        
+        // Agregar el último total de área
+        if ($currentArea !== '') {
+            $finalResult[] = $areaTotals[$currentArea];
+        }
+        
+        // Agregar fila de total general
+        $finalResult[] = $totalGeneral;
+        
+        // Filtrar según tipo de vista
+        if ($tipoVista === 'total') {
+            $finalResult = array_filter($finalResult, function($row) {
+                return isset($row['es_total_area']) || (isset($row['area']) && $row['area'] === 'TOTAL GENERAL');
+            });
+        }
+        
+        return $finalResult;
+    }
+    
+    /**
+     * Obtiene lista de administradores con información de creador
      */
     public function getAdmins() {
-        $stmt = $this->pdo->query("SELECT * FROM usuarios_admin ORDER BY rol, usuario");
+        $stmt = $this->pdo->query("
+            SELECT ua.*, 
+                   COALESCE(creador.usuario, 'SISTEMA') AS creado_por_nombre
+            FROM usuarios_admin ua 
+            LEFT JOIN usuarios_admin creador ON ua.creado_por = creador.id 
+            ORDER BY ua.rol, ua.apellidos, ua.nombres
+        ");
         return $stmt->fetchAll();
     }
     
@@ -1056,6 +1866,108 @@ class ReportGenerator {
         $stmt->execute([$id]);
         return $stmt->fetch();
     }
+    
+    /**
+     * Obtiene historial de cambios
+     */
+    public function getHistorial($fechaInicio = null, $fechaFin = null, $tabla = null, $accion = null, $creadoPor = null) {
+        $params = [];
+        $where = "WHERE 1=1";
+        
+        if ($fechaInicio) {
+            $where .= " AND DATE(h.fecha_modificacion) >= ?";
+            $params[] = $fechaInicio;
+        }
+        
+        if ($fechaFin) {
+            $where .= " AND DATE(h.fecha_modificacion) <= ?";
+            $params[] = $fechaFin;
+        }
+        
+        if ($tabla) {
+            $where .= " AND h.tabla_afectada = ?";
+            $params[] = $tabla;
+        }
+        
+        if ($accion) {
+            $where .= " AND h.accion = ?";
+            $params[] = $accion;
+        }
+        
+        if ($creadoPor) {
+            $where .= " AND ua.usuario LIKE ?";
+            $params[] = "%$creadoPor%";
+        }
+        
+        $sql = "SELECT h.*, ua.usuario AS modificado_por_nombre
+                FROM historial_cambios h
+                LEFT JOIN usuarios_admin ua ON h.modificado_por = ua.id
+                $where
+                ORDER BY h.fecha_modificacion DESC";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Obtiene lista de áreas
+     */
+    public function getAreas() {
+        global $AREAS_PREDEFINIDAS;
+        return $AREAS_PREDEFINIDAS;
+    }
+    
+    /**
+     * Obtiene lista de cargos por área
+     */
+    public function getPositionsByArea($area) {
+        global $CARGOS_POR_AREA;
+        return isset($CARGOS_POR_AREA[$area]) ? $CARGOS_POR_AREA[$area] : ['Otros'];
+    }
+    
+    /**
+     * Obtiene lista de cargos
+     */
+    public function getPositions() {
+        global $CARGOS_POR_AREA;
+        $positions = [];
+        foreach ($CARGOS_POR_AREA as $cargos) {
+            $positions = array_merge($positions, $cargos);
+        }
+        return array_unique($positions);
+    }
+    
+    /**
+     * Obtiene lista de empleados para el select
+     */
+    public function getEmployeesForSelect() {
+        $stmt = $this->pdo->query("SELECT id, dni, nombres, apellidos, CONCAT(apellidos, ' ', nombres) AS nombre_completo FROM empleados WHERE nombres IS NOT NULL AND apellidos IS NOT NULL AND estado = 'activo' ORDER BY apellidos, nombres");
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Busca empleados por término (para el autocompletado)
+     */
+    public function searchEmployees($term) {
+        $stmt = $this->pdo->prepare("SELECT id, dni, CONCAT(apellidos, ' ', nombres) AS nombre_completo 
+                                    FROM empleados 
+                                    WHERE (dni LIKE ? OR CONCAT(apellidos, ' ', nombres) LIKE ?)
+                                    AND nombres IS NOT NULL 
+                                    AND apellidos IS NOT NULL
+                                    AND estado = 'activo'
+                                    ORDER BY apellidos, nombres
+                                    LIMIT 10");
+        $stmt->execute(["%$term%", "%$term%"]);
+        return $stmt->fetchAll();
+    }
+}
+
+// Función auxiliar para convertir minutos a tiempo
+function minutesToTime($minutes) {
+    $horas = floor($minutes / 60);
+    $minutos = $minutes % 60;
+    return sprintf("%02d:%02d", $horas, $minutos);
 }
 
 // Instanciar el generador de reportes
@@ -1064,41 +1976,42 @@ $reportGenerator = new ReportGenerator($pdo);
 // Determinar qué sección mostrar
 $section = $_GET['section'] ?? 'dashboard';
 
-// Procesar filtros comunes para reportes
+// Configurar fechas por defecto para reportes - SIEMPRE FECHA ACTUAL
 $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
 $fechaFin = $_GET['fecha_fin'] ?? date('Y-m-d');
-$area = $_GET['area'] ?? null;
-$cargo = $_GET['cargo'] ?? null;
-$tipoPersonal = $_GET['tipo_personal'] ?? null;
-$busqueda = $_GET['busqueda'] ?? null;
+
+// Obtener minutos de tolerancia
+$minutosTolerancia = getConfig('minutos_tolerancia', $pdo) ?: 5;
 
 // Generar el reporte correspondiente si estamos en dashboard
 if ($section === 'dashboard') {
     $reportType = $_GET['report_type'] ?? 'daily';
+    $tipoVista = $_GET['tipo_vista'] ?? 'detallado';
     
     switch ($reportType) {
         case 'tardiness':
-            $reportData = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin, $area, $cargo, $tipoPersonal, $busqueda);
+            $reportData = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin);
             $reportTitle = "Reporte de Tardanzas";
             break;
             
         case 'permission':
-            $reportData = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin, $area, $cargo, $tipoPersonal, $busqueda);
+            $reportData = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin);
+            $permissionTotals = $reportGenerator->getPermissionTotals($fechaInicio, $fechaFin);
             $reportTitle = "Reporte de Permisos";
             break;
             
-        case 'consolidated_area':
-            $reportData = $reportGenerator->getConsolidatedAreaReport($fechaInicio, $fechaFin);
-            $reportTitle = "Reporte Consolidado por Áreas";
+        case 'no_asistencia':
+            $reportData = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin);
+            $reportTitle = "Empleados Sin Asistencia";
             break;
             
-        case 'consolidated_person':
-            $reportData = $reportGenerator->getConsolidatedPersonReport($fechaInicio, $fechaFin, $area, $cargo, $tipoPersonal, $busqueda);
-            $reportTitle = "Reporte Consolidado por Persona";
+        case 'areas':
+            $reportData = $reportGenerator->getAreaReport($fechaInicio, $fechaFin, $tipoVista);
+            $reportTitle = "Reporte por Áreas";
             break;
             
         default: // daily
-            $reportData = $reportGenerator->getDailyReport($fechaInicio, $fechaFin, $area, $cargo, $tipoPersonal, $busqueda);
+            $reportData = $reportGenerator->getDailyReport($fechaInicio, $fechaFin);
             $reportTitle = "Reporte Diario de Asistencia";
             break;
     }
@@ -1112,337 +2025,47 @@ if ($section === 'dashboard') {
     $paginatedData = array_slice($reportData, $offset, $itemsPerPage);
 }
 
-// Obtener datos para sección de empleados
-if ($section === 'empleados' && $isSuperAdmin) {
-    $employees = $reportGenerator->getAllEmployees();
-    
-    // Si estamos editando, obtener datos del empleado
-    $editingEmployee = null;
-    if (isset($_GET['editar_empleado'])) {
-        $editingEmployee = $reportGenerator->getEmployeeById($_GET['editar_empleado']);
-    }
+// Obtener datos para otras secciones
+if ($section === 'admins') {
+    $adminsData = $reportGenerator->getAdmins();
+    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $itemsPerPage = 20;
+    $totalItems = count($adminsData);
+    $totalPages = ceil($totalItems / $itemsPerPage);
+    $offset = ($currentPage - 1) * $itemsPerPage;
+    $paginatedAdmins = array_slice($adminsData, $offset, $itemsPerPage);
 }
 
-// Obtener datos para sección de administradores
-if ($section === 'administradores' && $isSuperAdmin) {
-    $admins = $reportGenerator->getAdmins();
+if ($section === 'trabajadores') {
+    $employeesData = $reportGenerator->getEmployees();
+    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $itemsPerPage = 20;
+    $totalItems = count($employeesData);
+    $totalPages = ceil($totalItems / $itemsPerPage);
+    $offset = ($currentPage - 1) * $itemsPerPage;
+    $paginatedEmployees = array_slice($employeesData, $offset, $itemsPerPage);
+}
+
+if ($section === 'history') {
+    $historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
+    $historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
+    $historialTabla = $_GET['historial_tabla'] ?? '';
+    $historialAccion = $_GET['historial_accion'] ?? '';
+    $historialCreadoPor = $_GET['historial_creado_por'] ?? '';
     
-    // Si estamos editando, obtener datos del administrador
-    $editingAdmin = null;
-    if (isset($_GET['editar_admin'])) {
-        $editingAdmin = $reportGenerator->getAdminById($_GET['editar_admin']);
-    }
+    $historialData = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor);
+    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $itemsPerPage = 20;
+    $totalItems = count($historialData);
+    $totalPages = ceil($totalItems / $itemsPerPage);
+    $offset = ($currentPage - 1) * $itemsPerPage;
+    $paginatedHistorial = array_slice($historialData, $offset, $itemsPerPage);
 }
 
 // Obtener listas para filtros
 $areas = $reportGenerator->getAreas();
 $positions = $reportGenerator->getPositions();
-$personalTypes = $reportGenerator->getPersonalTypes();
-$employeesList = $reportGenerator->getEmployees();
-
-// Función para exportar a Excel
-if (isset($_GET['export_excel']) && $section === 'dashboard') {
-    header("Content-Type: application/vnd.ms-excel");
-    header("Content-Disposition: attachment; filename=reporte_asistencia_" . date('Ymd_His') . ".xls");
-    header("Pragma: no-cache");
-    header("Expires: 0");
-    
-    echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
-    echo '<head>';
-    echo '<meta charset="UTF-8">';
-    echo '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Reporte</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->';
-    echo '<style>';
-    echo 'body { font-family: Arial, sans-serif; font-size: 12px; color: #333333; }';
-    echo 'table { border-collapse: collapse; width: 100%; mso-border-alt: solid black .5pt; }';
-    echo 'th, td { border: 1.5pt solid black; text-align: left; padding: 8px; mso-border-alt: solid black .5pt; }';
-    echo 'th { background-color: #8A1538; color: white; font-weight: bold; text-align: center; vertical-align: middle; }';
-    echo '.title { font-size: 18px; font-weight: bold; color: #8A1538; margin-bottom: 15px; text-align: center; }';
-    echo '.subtitle { font-size: 14px; margin-bottom: 15px; text-align: center; }';
-    echo '.filter { font-size: 12px; margin-bottom: 8px; padding: 5px; background-color: #f9f9f9; border: 1px solid #ddd; }';
-    echo '.filter strong { color: #8A1538; }';
-    echo '.header-info { margin-bottom: 20px; border: 1.5pt solid black; padding: 10px; background-color: #f5f5f5; }';
-    echo '.logo { text-align: center; margin-bottom: 15px; }';
-    echo '.university { font-weight: bold; font-size: 16px; text-align: center; margin-bottom: 5px; color: #8A1538; }';
-    echo '.report-title { font-weight: bold; font-size: 16px; text-align: center; margin-bottom: 10px; color: #8A1538; }';
-    echo '.period { font-size: 14px; text-align: center; margin-bottom: 15px; font-weight: bold; }';
-    echo '.generated { font-size: 11px; text-align: right; margin-top: 20px; color: #666; padding: 5px; border-top: 1.5pt solid black; }';
-    echo '.badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; border: 1px solid #ccc; }';
-    echo '.badge-success { background-color: #e8f5e9; color: #2e7d32; border-color: #c8e6c9; }';
-    echo '.badge-warning { background-color: #fff8e1; color: #f57c00; border-color: #ffecb3; }';
-    echo '.badge-danger { background-color: #ffebee; color: #d32f2f; border-color: #ffcdd2; }';
-    echo '.badge-info { background-color: #e3f2fd; color: #1565c0; border-color: #bbdefb; }';
-    echo '.detail-table { width: 95%; margin: 0 auto; border: 1.5pt solid black; }';
-    echo '.detail-table th { background-color: #6a0dad; font-size: 11px; }';
-    echo '.detail-row td { padding: 0 !important; border: none !important; }';
-    echo '.text-center { text-align: center; }';
-    echo '.text-right { text-align: right; }';
-    echo '.bg-light { background-color: #f9f9f9; }';
-    echo '.nowrap { white-space: nowrap; }';
-    echo '</style>';
-    echo '</head>';
-    echo '<body>';
-    
-    // Encabezado del reporte
-    echo '<div class="logo">';
-    echo '<div class="university">' . UNIVERSIDAD_NOMBRE . '</div>';
-    echo '<div class="report-title">' . $reportTitle . '</div>';
-    echo '<div class="period">Periodo: ' . date('d/m/Y', strtotime($fechaInicio)) . ' al ' . date('d/m/Y', strtotime($fechaFin)) . '</div>';
-    echo '</div>';
-    
-    // Filtros aplicados
-    echo '<div class="header-info">';
-    echo '<div style="font-weight: bold; margin-bottom: 10px; color: #8A1538;">FILTROS APLICADOS:</div>';
-    if ($area) echo '<div class="filter"><strong>Área:</strong> ' . htmlspecialchars($area) . '</div>';
-    if ($cargo) echo '<div class="filter"><strong>Cargo:</strong> ' . htmlspecialchars($cargo) . '</div>';
-    if ($tipoPersonal) echo '<div class="filter"><strong>Tipo de Personal:</strong> ' . htmlspecialchars($tipoPersonal) . '</div>';
-    if ($busqueda) echo '<div class="filter"><strong>Búsqueda:</strong> ' . htmlspecialchars($busqueda) . '</div>';
-    echo '</div>';
-    
-    // Contenido del reporte
-    echo '<table>';
-    
-    // Encabezados según tipo de reporte
-    switch ($reportType) {
-        case 'tardiness':
-            echo '<tr>
-                <th>DNI</th>
-                <th>NOMBRE</th>
-                <th>FECHA</th>
-                <th>HORA ENTRADA MAÑANA</th>
-                <th>HORA MARCADA MAÑANA</th>
-                <th>TARDANZA MAÑANA</th>
-                <th>HORA ENTRADA TARDE</th>
-                <th>HORA MARCADA TARDE</th>
-                <th>TARDANZA TARDE</th>
-            </tr>';
-            break;
-            
-        case 'permission':
-            echo '<tr>
-                <th>DNI</th>
-                <th>NOMBRE</th>
-                <th>ÁREA</th>
-                <th>CARGO</th>
-                <th>TIPO</th>
-                <th>FECHA</th>
-                <th>TIPO PERMISO</th>
-                <th>MOTIVO</th>
-                <th>SALIDA</th>
-                <th>RETORNO</th>
-                <th>REGISTRO</th>
-            </tr>';
-            break;
-            
-        case 'consolidated_area':
-            echo '<tr>
-                <th>ÁREA</th>
-                <th>CARGO</th>
-                <th>EMPLEADOS</th>
-                <th>DÍAS</th>
-                <th>ASISTENCIAS</th>
-                <th>PERMISOS</th>
-                <th>TARDANZAS</th>
-                <th>FALTAS</th>
-                <th>% ASISTENCIA</th>
-            </tr>';
-            break;
-            
-        case 'consolidated_person':
-            echo '<tr>
-                <th>DNI</th>
-                <th>NOMBRE</th>
-                <th>ÁREA</th>
-                <th>CARGO</th>
-                <th>TIPO</th>
-                <th>DÍAS</th>
-                <th>ASISTENCIAS</th>
-                <th>PERMISOS</th>
-                <th>FALTAS</th>
-                <th>TARDANZAS</th>
-                <th>% ASISTENCIA</th>
-            </tr>';
-            break;
-            
-        default: // daily
-            echo '<tr>
-                <th>FECHA</th>
-                <th>DNI</th>
-                <th>NOMBRE</th>
-                <th>ÁREA</th>
-                <th>CARGO</th>
-                <th>TIPO</th>
-                <th>ENT. MAÑANA</th>
-                <th>SAL. MAÑANA</th>
-                <th>ENT. TARDE</th>
-                <th>SAL. TARDE</th>
-                <th>REGISTROS</th>
-            </tr>';
-            break;
-    }
-    
-    // Datos según tipo de reporte
-    $rowCount = 0;
-    foreach ($reportData as $row) {
-        $rowClass = ($rowCount % 2 == 0) ? 'bg-light' : '';
-        echo '<tr class="' . $rowClass . '">';
-        
-        switch ($reportType) {
-            case 'tardiness':
-                // Combinamos tardanzas de mañana y tarde
-                $tardanzasCombinadas = [];
-                
-                // Procesar tardanzas de mañana
-                foreach ($row['tardanzas_manana'] as $tardanza) {
-                    $tardanzasCombinadas[$tardanza['fecha']] = [
-                        'manana' => $tardanza,
-                        'tarde' => null
-                    ];
-                }
-                
-                // Procesar tardanzas de tarde
-                foreach ($row['tardanzas_tarde'] as $tardanza) {
-                    if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
-                        $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
-                    } else {
-                        $tardanzasCombinadas[$tardanza['fecha']] = [
-                            'manana' => null,
-                            'tarde' => $tardanza
-                        ];
-                    }
-                }
-                
-                // Mostrar todas las tardanzas combinadas
-                foreach ($tardanzasCombinadas as $fecha => $tardanzas) {
-                    echo '<td class="text-center">' . htmlspecialchars($row['dni']) . '</td>
-                    <td>' . htmlspecialchars($row['nombre_completo']) . '</td>
-                    <td class="text-center nowrap">' . $fecha . '</td>
-                    
-                    <!-- Datos mañana -->
-                    <td class="text-center">' . ($tardanzas['manana'] ? $tardanzas['manana']['hora_entrada'] : '-') . '</td>
-                    <td class="text-center">' . ($tardanzas['manana'] ? $tardanzas['manana']['hora_marcada'] : '-') . '</td>
-                    <td class="text-center" style="color: ' . (($tardanzas['manana'] && $tardanzas['manana']['tardanza'] != '00:00') ? '#d32f2f' : '#2e7d32') . ';">' . ($tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-') . '</td>
-                    
-                    <!-- Datos tarde -->
-                    <td class="text-center">' . ($tardanzas['tarde'] ? $tardanzas['tarde']['hora_entrada'] : '-') . '</td>
-                    <td class="text-center">' . ($tardanzas['tarde'] ? $tardanzas['tarde']['hora_marcada'] : '-') . '</td>
-                    <td class="text-center" style="color: ' . (($tardanzas['tarde'] && $tardanzas['tarde']['tardanza'] != '00:00') ? '#d32f2f' : '#2e7d32') . ';">' . ($tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-') . '</td>
-                    </tr><tr class="' . $rowClass . '">';
-                }
-                break;
-                
-            case 'permission':
-                echo '<td class="text-center">' . htmlspecialchars($row['dni']) . '</td>
-                    <td>' . htmlspecialchars($row['nombre_completo']) . '</td>
-                    <td>' . htmlspecialchars($row['area']) . '</td>
-                    <td>' . htmlspecialchars($row['puesto']) . '</td>
-                    <td class="text-center">' . htmlspecialchars($row['tipo_personal']) . '</td>
-                    <td class="text-center nowrap">' . date('d/m/Y', strtotime($row['fecha_permiso'])) . '</td>
-                    <td class="text-center">' . htmlspecialchars($row['tipo_permiso']) . '</td>
-                    <td>' . htmlspecialchars($row['motivo']) . '</td>
-                    <td class="text-center">' . $row['hora_salida'] . '</td>
-                    <td class="text-center">' . $row['hora_retorno'] . '</td>
-                    <td class="text-center">' . $row['hora_registro'] . '</td>';
-                break;
-                
-            case 'consolidated_area':
-                echo '<td>' . htmlspecialchars($row['area']) . '</td>
-                    <td>' . htmlspecialchars($row['cargo']) . '</td>
-                    <td class="text-center">' . $row['total_empleados'] . '</td>
-                    <td class="text-center">' . $row['total_dias'] . '</td>
-                    <td class="text-center">' . $row['total_asistencias'] . '</td>
-                    <td class="text-center">' . $row['total_permisos'] . '</td>
-                    <td class="text-center">' . $row['total_tardanzas'] . '</td>
-                    <td class="text-center">' . $row['total_faltas'] . '</td>
-                    <td class="text-center" style="font-weight: bold; color: ' . ($row['porcentaje_asistencia'] >= 90 ? '#2e7d32' : ($row['porcentaje_asistencia'] >= 70 ? '#f57c00' : '#d32f2f')) . ';">' . $row['porcentaje_asistencia'] . '%</td>';
-                break;
-                
-            case 'consolidated_person':
-                echo '<td class="text-center">' . htmlspecialchars($row['dni']) . '</td>
-                    <td>' . htmlspecialchars($row['nombre_completo']) . '</td>
-                    <td>' . htmlspecialchars($row['area']) . '</td>
-                    <td>' . htmlspecialchars($row['puesto']) . '</td>
-                    <td class="text-center">' . htmlspecialchars($row['tipo_personal']) . '</td>
-                    <td class="text-center">' . $row['total_dias'] . '</td>
-                    <td class="text-center">' . $row['asistencias'] . '</td>
-                    <td class="text-center">' . $row['permisos'] . '</td>
-                    <td class="text-center">' . $row['faltas'] . '</td>
-                    <td class="text-center">' . $row['tardanzas'] . '</td>
-                    <td class="text-center" style="font-weight: bold; color: ' . ($row['porcentaje_asistencia'] >= 90 ? '#2e7d32' : ($row['porcentaje_asistencia'] >= 70 ? '#f57c00' : '#d32f2f')) . ';">' . $row['porcentaje_asistencia'] . '%</td>';
-                break;
-                
-            default: // daily
-                echo '<td class="text-center nowrap">' . $row['fecha'] . '</td>
-                    <td class="text-center">' . htmlspecialchars($row['dni']) . '</td>
-                    <td>' . htmlspecialchars($row['nombre_completo']) . '</td>
-                    <td>' . htmlspecialchars($row['area']) . '</td>
-                    <td>' . htmlspecialchars($row['puesto']) . '</td>
-                    <td class="text-center">' . htmlspecialchars($row['tipo_personal']) . '</td>';
-                
-                if ($row['tipo_personal'] === 'Administrativo') {
-                    echo '<td class="text-center">' . ($row['entrada_manana_reg'] ?? '-') . '</td>
-                        <td class="text-center">' . ($row['salida_manana_reg'] ?? '-') . '</td>
-                        <td class="text-center">' . ($row['entrada_tarde_reg'] ?? '-') . '</td>
-                        <td class="text-center">' . ($row['salida_tarde_reg'] ?? '-') . '</td>';
-                } else {
-                    echo '<td class="text-center">-</td><td class="text-center">-</td><td class="text-center">-</td><td class="text-center">-</td>';
-                }
-                
-                echo '<td class="text-center">' . (!empty($row['registros_dia']) ? implode(', ', $row['registros_dia']) : '-') . '</td>';
-                break;
-        }
-        
-        echo '</tr>';
-        
-        // Detalle para reporte consolidado por persona
-        if ($reportType === 'consolidated_person' && isset($row['detalle_asistencias'])) {
-            echo '<tr class="detail-row">
-                <td colspan="12" style="border: 1.5pt solid black; padding: 10px;">
-                    <table class="detail-table">
-                        <thead>
-                            <tr>
-                                <th>Fecha</th>
-                                <th>Tipo</th>
-                                <th>Registros</th>
-                                <th>Permiso</th>
-                            </tr>
-                        </thead>
-                        <tbody>';
-            
-            foreach ($row['detalle_asistencias'] as $detalle) {
-                echo '<tr>
-                    <td class="text-center nowrap">' . $detalle['fecha'] . '</td>
-                    <td class="text-center">';
-                
-                if ($detalle['tipo'] === 'Asistencia') {
-                    echo '<span class="badge badge-success">Asistencia</span>';
-                } elseif ($detalle['tipo'] === 'Permiso') {
-                    echo '<span class="badge badge-info">Permiso</span>';
-                } else {
-                    echo '<span class="badge badge-danger">Falta</span>';
-                }
-                
-                echo '</td>
-                    <td class="text-center">' . (!empty($detalle['registros']) ? implode(', ', $detalle['registros']) : '-') . '</td>
-                    <td class="text-center">' . ($detalle['permiso'] ?? '-') . '</td>
-                </tr>';
-            }
-            
-            echo '</tbody>
-                    </table>
-                </td>
-            </tr>';
-        }
-        
-        $rowCount++;
-    }
-    
-    echo '</table>';
-    
-    // Pie de página
-    echo '<div class="generated">Generado el ' . date('d/m/Y H:i:s') . ' | Sistema de Asistencia</div>';
-    echo '</body></html>';
-    exit;
-}
+$employeesList = $reportGenerator->getEmployeesForSelect();
 
 // Procesar búsqueda de empleados para el modal (AJAX)
 if (isset($_GET['search_employees'])) {
@@ -1453,12 +2076,12 @@ if (isset($_GET['search_employees'])) {
     exit;
 }
 
-// Obtener datos de empleado para edición
-if (isset($_GET['get_employee'])) {
-    $id = $_GET['get_employee'];
-    $employee = $reportGenerator->getEmployeeById($id);
+// Obtener datos de permiso para edición
+if (isset($_GET['get_permiso'])) {
+    $id = $_GET['get_permiso'];
+    $permiso = $reportGenerator->getPermissionById($id);
     header('Content-Type: application/json');
-    echo json_encode($employee);
+    echo json_encode($permiso);
     exit;
 }
 
@@ -1468,6 +2091,24 @@ if (isset($_GET['get_admin'])) {
     $admin = $reportGenerator->getAdminById($id);
     header('Content-Type: application/json');
     echo json_encode($admin);
+    exit;
+}
+
+// Obtener datos de empleado para edición
+if (isset($_GET['get_empleado'])) {
+    $id = $_GET['get_empleado'];
+    $empleado = $reportGenerator->getEmployeeById($id);
+    header('Content-Type: application/json');
+    echo json_encode($empleado);
+    exit;
+}
+
+// Obtener cargos por área (AJAX)
+if (isset($_GET['get_cargos_by_area'])) {
+    $area = $_GET['area'] ?? '';
+    $cargos = $reportGenerator->getPositionsByArea($area);
+    header('Content-Type: application/json');
+    echo json_encode($cargos);
     exit;
 }
 ?>
@@ -1489,20 +2130,22 @@ if (isset($_GET['get_admin'])) {
             --secondary: #D4AF37;
             --secondary-light: #E8C766;
             --secondary-dark: #BF9428;
-            --success: #4CAF50;
-            --error: #F44336;
-            --warning: #FFC107;
-            --info: #2196F3;
-            --dark: #212121;
-            --light: #F5F5F5;
+            --success: #28a745;
+            --error: #dc3545;
+            --warning: #ffc107;
+            --info: #17a2b8;
+            --dark: #343a40;
+            --light: #f8f9fa;
             --white: #FFFFFF;
-            --gray: #9E9E9E;
-            --text-dark: #333333;
-            --text-light: #757575;
-            --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
-            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
-            --shadow-lg: 0 10px 25px rgba(0,0,0,0.1);
-            --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            --gray: #6c757d;
+            --text-dark: #212529;
+            --text-light: #6c757d;
+            --shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            --shadow-md: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+            --shadow-lg: 0 1rem 3rem rgba(0, 0, 0, 0.175);
+            --transition: all 0.3s ease;
+            --border-radius: 0.375rem;
+            --border-radius-lg: 0.5rem;
         }
         
         * {
@@ -1514,25 +2157,35 @@ if (isset($_GET['get_admin'])) {
         html, body {
             height: 100%;
             font-family: 'Poppins', sans-serif;
-            background-color: #f8f9fa;
+            background-color: var(--light);
             color: var(--text-dark);
             line-height: 1.6;
         }
         
         .sidebar {
             width: 250px;
-            background-color: var(--primary);
+            background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
             color: white;
             position: fixed;
             height: 100%;
             padding: 1.5rem 0;
             transition: var(--transition);
             z-index: 1000;
+            box-shadow: var(--shadow-lg);
         }
         
         .sidebar-header {
             padding: 0 1.5rem 1.5rem;
             border-bottom: 1px solid rgba(255,255,255,0.1);
+            text-align: center;
+        }
+        
+        .sidebar-header h3 {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            justify-content: center;
+            font-size: 1.25rem;
         }
         
         .sidebar-menu {
@@ -1547,22 +2200,32 @@ if (isset($_GET['get_admin'])) {
             color: rgba(255,255,255,0.8);
             text-decoration: none;
             transition: var(--transition);
+            border-left: 3px solid transparent;
+            font-size: 0.9rem;
         }
         
         .menu-item:hover, .menu-item.active {
             background-color: rgba(255,255,255,0.1);
             color: white;
+            border-left-color: var(--secondary);
+            transform: translateX(5px);
         }
         
         .menu-item i {
             width: 20px;
             text-align: center;
+            transition: var(--transition);
+        }
+        
+        .menu-item:hover i {
+            transform: scale(1.1);
         }
         
         .main-content {
             margin-left: 250px;
             padding: 1.5rem;
             transition: var(--transition);
+            min-height: 100vh;
         }
         
         .header {
@@ -1570,8 +2233,15 @@ if (isset($_GET['get_admin'])) {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid rgba(0,0,0,0.1);
+            padding: 1.25rem 1.5rem;
+            background: var(--white);
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--shadow-sm);
+            transition: var(--transition);
+        }
+        
+        .header:hover {
+            box-shadow: var(--shadow-md);
         }
         
         .header h1 {
@@ -1581,35 +2251,46 @@ if (isset($_GET['get_admin'])) {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            font-weight: 600;
         }
         
         .user-info {
             display: flex;
             align-items: center;
             gap: 1rem;
-        }
-        
-        .user-info .btn-logout {
-            background-color: var(--error);
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: var(--transition);
             font-size: 0.9rem;
         }
         
+        .user-info .btn-logout {
+            background: linear-gradient(135deg, var(--error) 0%, #c82333 100%);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.85rem;
+            box-shadow: var(--shadow-sm);
+            text-decoration: none;
+        }
+        
         .user-info .btn-logout:hover {
-            background-color: #d32f2f;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
         
         .card {
             background-color: var(--white);
-            border-radius: 8px;
-            box-shadow: var(--shadow-md);
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--shadow-sm);
             padding: 1.5rem;
             margin-bottom: 1.5rem;
+            transition: var(--transition);
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        .card:hover {
+            box-shadow: var(--shadow-md);
         }
         
         .card-title {
@@ -1619,50 +2300,17 @@ if (isset($_GET['get_admin'])) {
             display: flex;
             align-items: center;
             gap: 0.75rem;
-        }
-        
-        .filters-form {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .form-group {
-            margin-bottom: 0;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 0.25rem;
-            font-weight: 500;
-            font-size: 0.85rem;
-            color: var(--text-dark);
-        }
-        
-        select, input {
-            width: 100%;
-            padding: 0.6rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-family: 'Poppins', sans-serif;
-            background-color: var(--white);
-            transition: var(--transition);
-            font-size: 0.9rem;
-        }
-        
-        select:focus, input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(138, 21, 56, 0.2);
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--light);
+            font-weight: 600;
         }
         
         .btn {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
             color: white;
             border: none;
-            padding: 0.7rem 1.25rem;
-            border-radius: 4px;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--border-radius);
             cursor: pointer;
             transition: var(--transition);
             font-weight: 500;
@@ -1672,185 +2320,229 @@ if (isset($_GET['get_admin'])) {
             gap: 0.5rem;
             font-size: 0.9rem;
             text-decoration: none;
+            box-shadow: var(--shadow-sm);
         }
         
         .btn:hover {
-            background-color: var(--primary-dark);
             transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
         }
         
         .btn-secondary {
-            background-color: var(--secondary);
+            background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
             color: var(--dark);
         }
         
-        .btn-secondary:hover {
-            background-color: var(--secondary-dark);
-        }
-        
         .btn-success {
-            background-color: var(--success);
-        }
-        
-        .btn-success:hover {
-            background-color: #388E3C;
-        }
-        
-        .btn-excel {
-            background-color: #1D6F42;
-        }
-        
-        .btn-excel:hover {
-            background-color: #165834;
+            background: linear-gradient(135deg, var(--success) 0%, #34ce57 100%);
         }
         
         .btn-danger {
-            background-color: var(--error);
+            background: linear-gradient(135deg, var(--error) 0%, #e74c3c 100%);
         }
         
-        .btn-danger:hover {
-            background-color: #d32f2f;
+        .btn-warning {
+            background: linear-gradient(135deg, var(--warning) 0%, #ffd351 100%);
+            color: var(--dark);
+        }
+        
+        .btn-info {
+            background: linear-gradient(135deg, var(--info) 0%, #5bc0de 100%);
+        }
+        
+        .btn-light {
+            background: var(--light);
+            color: var(--dark);
+            border: 1px solid #dee2e6;
         }
         
         .action-buttons {
             display: flex;
+            gap: 0.75rem;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+        }
+        
+        .filters-container {
+            background: var(--white);
+            padding: 1.25rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 1.5rem;
+            border: 1px solid #e9ecef;
+        }
+        
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
-            justify-content: flex-end;
+            align-items: end;
+        }
+        
+        .filter-group {
+            display: flex;
+            gap: 0.75rem;
+            align-items: end;
+        }
+        
+        .filter-group .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+        
+        .filter-actions {
+            display: flex;
+            gap: 0.75rem;
+            align-items: end;
+        }
+        
+        .form-group {
+            margin-bottom: 0;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-dark);
+            font-size: 0.9rem;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e9ecef;
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+            transition: var(--transition);
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 0.2rem rgba(138, 21, 56, 0.25);
         }
         
         .table-responsive {
             overflow-x: auto;
             margin-top: 1rem;
-            border-radius: 8px;
+            border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
+            max-height: 600px;
+            overflow-y: auto;
         }
         
         table {
             width: 100%;
             border-collapse: collapse;
             min-width: 800px;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
         
         th, td {
-            padding: 0.6rem;
+            padding: 0.75rem;
             text-align: left;
-            border-bottom: 1px solid rgba(0,0,0,0.05);
+            border-bottom: 1px solid #dee2e6;
         }
         
         th {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
             color: white;
             font-weight: 500;
             position: sticky;
             top: 0;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
+            z-index: 10;
         }
         
         tr:nth-child(even) {
-            background-color: #f9f9f9;
+            background-color: #f8f9fa;
         }
         
         tr:hover {
             background-color: rgba(138, 21, 56, 0.05);
+            transition: var(--transition);
         }
         
         .no-data {
             text-align: center;
-            padding: 2rem;
+            padding: 3rem;
             color: var(--gray);
         }
         
         .badge {
             display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
+            padding: 0.35rem 0.65rem;
+            border-radius: var(--border-radius);
             font-size: 0.75rem;
             font-weight: 500;
+            box-shadow: var(--shadow-sm);
         }
         
         .badge-success {
-            background-color: #e8f5e9;
-            color: var(--success);
+            background: linear-gradient(135deg, var(--success) 0%, #34ce57 100%);
+            color: white;
         }
         
         .badge-warning {
-            background-color: #fff8e1;
-            color: var(--warning);
+            background: linear-gradient(135deg, var(--warning) 0%, #ffd351 100%);
+            color: var(--dark);
         }
         
         .badge-danger {
-            background-color: #ffebee;
-            color: var(--error);
+            background: linear-gradient(135deg, var(--error) 0%, #e74c3c 100%);
+            color: white;
         }
         
         .badge-info {
-            background-color: #e3f2fd;
-            color: var(--info);
+            background: linear-gradient(135deg, var(--info) 0%, #5bc0de 100%);
+            color: white;
         }
         
-        .progress-bar {
-            height: 8px;
-            background: #e0e0e0;
-            border-radius: 4px;
-            overflow: hidden;
-            width: 80px;
+        .badge-secondary {
+            background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
+            color: var(--dark);
         }
         
-        .progress-bar-fill {
-            height: 100%;
-            border-radius: 4px;
+        .badge-light {
+            background: var(--light);
+            color: var(--dark);
+            border: 1px solid #dee2e6;
         }
         
         .pagination {
             display: flex;
             justify-content: center;
-            margin-top: 1rem;
+            margin-top: 1.5rem;
             gap: 0.5rem;
         }
         
         .pagination a, .pagination span {
-            padding: 0.5rem 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            padding: 0.6rem 0.9rem;
+            border: 1px solid #dee2e6;
+            border-radius: var(--border-radius);
             text-decoration: none;
             color: var(--primary);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
+            transition: var(--transition);
         }
         
         .pagination a:hover {
             background-color: #f0f0f0;
+            transform: translateY(-1px);
         }
         
         .pagination .active {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
             color: white;
             border-color: var(--primary);
-        }
-        
-        .detail-row {
-            background-color: #f9f9f9;
-        }
-        
-        .detail-row td {
-            padding: 0.5rem;
-            font-size: 0.85rem;
-        }
-        
-        .detail-table {
-            width: 100%;
-            margin-top: 0.5rem;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }
-        
-        .detail-table th, .detail-table td {
-            padding: 0.4rem;
-            border: 1px solid #ddd;
-        }
-        
-        .detail-table th {
-            background-color: #9b2020ff;
         }
         
         .modal {
@@ -1862,20 +2554,31 @@ if (isset($_GET['get_admin'])) {
             width: 100%;
             height: 100%;
             overflow: auto;
-            background-color: rgba(0,0,0,0.4);
+            background-color: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
         }
         
         .modal-content {
             background-color: #fefefe;
             margin: 5% auto;
-            padding: 1.5rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-            width: 90%;
-            max-width: 800px;
+            padding: 2rem;
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--shadow-lg);
+            width: 95%;
+            max-width: 1200px;
             position: relative;
-            top: 10%;
-            transform: translateY(-10%);
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         
         .modal-lg {
@@ -1886,26 +2589,32 @@ if (isset($_GET['get_admin'])) {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--light);
         }
         
         .modal-title {
-            font-size: 1.25rem;
+            font-size: 1.5rem;
             color: var(--primary);
             margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 600;
         }
         
         .close {
             color: #aaa;
-            font-size: 1.5rem;
+            font-size: 1.75rem;
             font-weight: bold;
             cursor: pointer;
+            transition: var(--transition);
         }
         
         .close:hover {
             color: #333;
+            transform: scale(1.1);
         }
         
         .modal-body {
@@ -1916,203 +2625,412 @@ if (isset($_GET['get_admin'])) {
             display: flex;
             justify-content: flex-end;
             gap: 0.75rem;
-        }
-        
-        .employee-photo {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 3px solid var(--primary);
-            margin-bottom: 1rem;
+            padding-top: 1rem;
+            border-top: 2px solid var(--light);
         }
         
         /* Estilos para Select2 */
         .select2-container--default .select2-selection--single {
-            height: 38px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            height: 45px;
+            border: 2px solid #e9ecef;
+            border-radius: var(--border-radius);
         }
         
         .select2-container--default .select2-selection--single .select2-selection__rendered {
-            line-height: 36px;
+            line-height: 41px;
             padding-left: 12px;
         }
         
         .select2-container--default .select2-selection--single .select2-selection__arrow {
-            height: 36px;
+            height: 43px;
         }
         
         .select2-container--default .select2-results__option--highlighted[aria-selected] {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
         }
-        .select2-container--default .select2-results__option[aria-selected=true] {
-    background-color: #f0f0f0;
-}
-
-.select2-container--default .select2-search--dropdown .select2-search__field {
-    border: 1px solid #ddd;
-}
-
-/* Estilos para el grid de formulario */
-.form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
-}
-
-.search-container {
-    margin-bottom: 1rem;
-}
-
-.search-input {
-    width: 100%;
-    padding: 0.6rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-family: 'Poppins', sans-serif;
-    transition: var(--transition);
-}
-
-.search-input:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(138, 21, 56, 0.2);
-}
-
-/* Estilos para mensajes flash */
-.flash-message {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    padding: 15px 20px;
-    border-radius: 8px;
-    color: white;
-    z-index: 1100;
-    box-shadow: var(--shadow-lg);
-    animation: fadeIn 0.3s, fadeOut 0.5s 1.5s forwards;
-}
-
-.flash-success {
-    background-color: var(--success);
-}
-
-.flash-error {
-    background-color: var(--error);
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeOut {
-    from { opacity: 1; transform: translateY(0); }
-    to { opacity: 0; transform: translateY(-20px); }
-}
-
-/* Estilos para confirmación de eliminación */
-.confirm-modal {
-    text-align: center;
-}
-
-.confirm-modal .modal-content {
-    max-width: 500px;
-}
-
-.confirm-modal .icon {
-    font-size: 3rem;
-    color: var(--error);
-    margin-bottom: 1rem;
-}
-
-.confirm-modal .message {
-    margin-bottom: 1.5rem;
-    font-size: 1.1rem;
-}
-
-.confirm-modal .buttons {
-    display: flex;
-    justify-content: center;
-    gap: 1rem;
-}
-
-/* Estilos para registros verticales */
-.registros-vertical {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-
-.registro-item {
-    padding: 0.25rem 0.5rem;
-    background-color: #f0f0f0;
-    border-radius: 4px;
-    font-size: 0.8rem;
-}
-
-@media (max-width: 992px) {
-    .sidebar {
-        width: 70px;
-        overflow: hidden;
-    }
-    
-    .sidebar-header span, .menu-item span {
-        display: none;
-    }
-    
-    .menu-item {
-        justify-content: center;
-        padding: 0.75rem;
-    }
-    
-    .main-content {
-        margin-left: 70px;
-    }
-    
-    .filters-form {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    }
-}
-
-@media (max-width: 768px) {
-    .filters-form {
-        grid-template-columns: 1fr 1fr;
-    }
-    
-    .header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 1rem;
-    }
-    
-    .action-buttons {
-        justify-content: flex-start;
-    }
-    
-    .modal-content {
-        margin: 10% auto;
-        width: 95%;
-    }
-     .form-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 576px) {
-    .filters-form {
-        grid-template-columns: 1fr;
-    }
-    
-    .main-content {
-        padding: 1rem;
-    }
-    
-    .modal-content {
-        margin: 15% auto;
-    }
-}
-</style>
+        
+        /* Estilos para mensajes flash */
+        .flash-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: var(--border-radius);
+            color: white;
+            z-index: 1100;
+            box-shadow: var(--shadow-lg);
+            animation: slideInRight 0.3s, slideOutRight 0.5s 2.5s forwards;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.9rem;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        @keyframes slideOutRight {
+            from {
+                opacity: 1;
+                transform: translateX(0);
+            }
+            to {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+        }
+        
+        .flash-success {
+            background: linear-gradient(135deg, var(--success) 0%, #34ce57 100%);
+        }
+        
+        .flash-error {
+            background: linear-gradient(135deg, var(--error) 0%, #e74c3c 100%);
+        }
+        
+        /* Estilos para registros verticales */
+        .registros-vertical {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        
+        .registro-item {
+            padding: 0.35rem 0.5rem;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+        
+        .registro-item:hover {
+            background-color: #e0e0e0;
+            transform: translateX(2px);
+        }
+        
+        /* Estilos para filas de totales */
+        .total-row {
+            background-color: #e8f5e9 !important;
+            font-weight: bold;
+        }
+        
+        .total-area-row {
+            background-color: #e3f2fd !important;
+            font-weight: bold;
+        }
+        
+        .total-general-row {
+            background-color: #fff8e1 !important;
+            font-weight: bold;
+        }
+        
+        /* Estilos mejorados para reportes profesionales */
+        .report-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-left: 4px solid var(--primary);
+        }
+        
+        .report-header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: var(--border-radius) var(--border-radius) 0 0;
+            margin: -1.5rem -1.5rem 1.5rem -1.5rem;
+        }
+        
+        .report-table {
+            font-size: 0.85rem;
+        }
+        
+        .report-table th {
+            background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        .report-table tr:hover {
+            background-color: rgba(138, 21, 56, 0.08);
+        }
+        
+        .tardanza-cell {
+            font-weight: 600;
+            color: #d32f2f;
+        }
+        
+        .permiso-cell {
+            background-color: rgba(33, 150, 243, 0.1);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+        }
+        
+        .area-cell {
+            background-color: rgba(76, 175, 80, 0.1);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            font-weight: 500;
+        }
+        
+        /* Estilos para porcentajes de asistencia */
+        .porcentaje-cell {
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .porcentaje-alto {
+            color: #4CAF50;
+        }
+        
+        .porcentaje-medio {
+            color: #FF9800;
+        }
+        
+        .porcentaje-bajo {
+            color: #F44336;
+        }
+        
+        /* Estilos para imagen ampliada - MEJORADO */
+        .image-modal {
+            display: none;
+            position: fixed;
+            z-index: 1002;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .image-modal-content {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            animation: zoom 0.6s;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        
+        @keyframes zoom {
+            from {transform: scale(0.8); opacity: 0;}
+            to {transform: scale(1); opacity: 1;}
+        }
+        
+        .close-image {
+            position: absolute;
+            top: 20px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            transition: 0.3s;
+            cursor: pointer;
+            z-index: 1003;
+        }
+        
+        .close-image:hover {
+            color: #bbb;
+            transform: scale(1.1);
+        }
+        
+        .employee-photo {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            object-fit: cover;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        
+        .employee-photo:hover {
+            transform: scale(1.1);
+        }
+        
+        .horario-fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: var(--border-radius);
+            border-left: 4px solid var(--info);
+        }
+        
+        .horario-fields.hidden {
+            display: none;
+        }
+        
+        /* NUEVO: Estilos para formularios horizontales en modales de empleados */
+        .empleado-form-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+        
+        .empleado-form-container .form-group:nth-child(odd) {
+            grid-column: 1;
+        }
+        
+        .empleado-form-container .form-group:nth-child(even) {
+            grid-column: 2;
+        }
+        
+        .empleado-form-container .form-group:nth-child(9),
+        .empleado-form-container .form-group:nth-child(10) {
+            grid-column: 1 / -1;
+        }
+        
+        .photo-preview-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: var(--border-radius);
+            border: 2px dashed #dee2e6;
+        }
+        
+        .photo-preview {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid var(--primary);
+        }
+        
+        .photo-upload {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        /* Nuevos estilos para formulario horizontal de administradores */
+        .admin-form-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        .admin-form-container .form-group:nth-child(odd) {
+            grid-column: 1;
+        }
+        
+        .admin-form-container .form-group:nth-child(even) {
+            grid-column: 2;
+        }
+        
+        .admin-form-container .form-group:nth-child(7) {
+            grid-column: 1 / -1;
+        }
+        
+        @media (max-width: 992px) {
+            .sidebar {
+                width: 70px;
+                overflow: hidden;
+            }
+            
+            .sidebar-header span, .menu-item span {
+                display: none;
+            }
+            
+            .menu-item {
+                justify-content: center;
+                padding: 0.75rem;
+            }
+            
+            .main-content {
+                margin-left: 70px;
+            }
+            
+            .admin-form-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .admin-form-container .form-group:nth-child(odd),
+            .admin-form-container .form-group:nth-child(even) {
+                grid-column: 1;
+            }
+            
+            .empleado-form-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .empleado-form-container .form-group:nth-child(odd),
+            .empleado-form-container .form-group:nth-child(even) {
+                grid-column: 1;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+            
+            .action-buttons {
+                justify-content: flex-start;
+            }
+            
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+            
+            .form-horizontal {
+                grid-template-columns: 1fr;
+            }
+            
+            .filters-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .filter-group {
+                flex-direction: column;
+            }
+            
+            .filter-actions {
+                flex-direction: column;
+            }
+            
+            .horario-fields {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .main-content {
+                padding: 1rem;
+            }
+            
+            .modal-content {
+                margin: 15% auto;
+                padding: 1rem;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
 </head>
 <body>
     <!-- Sidebar -->
@@ -2121,31 +3039,47 @@ if (isset($_GET['get_admin'])) {
             <h3><i class="fas fa-user-shield"></i> <span>Admin</span></h3>
         </div>
         <div class="sidebar-menu">
-            <a href="?section=dashboard&report_type=daily" class="menu-item <?= $section === 'dashboard' && (!isset($_GET['report_type']) || $_GET['report_type'] === 'daily') ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=daily&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && (!isset($_GET['report_type']) || $_GET['report_type'] === 'daily') ? 'active' : '' ?>">
                 <i class="fas fa-calendar-day"></i> <span>Diario</span>
             </a>
-            <a href="?section=dashboard&report_type=tardiness" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'tardiness' ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=no_asistencia&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'no_asistencia' ? 'active' : '' ?>">
+                <i class="fas fa-user-times"></i> <span>Sin Asistencia</span>
+            </a>
+            <a href="?section=dashboard&report_type=tardiness&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'tardiness' ? 'active' : '' ?>">
                 <i class="fas fa-clock"></i> <span>Tardanzas</span>
             </a>
-             <a href="?section=dashboard&report_type=permission" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'permission' ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=permission&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'permission' ? 'active' : '' ?>">
                 <i class="fas fa-file-signature"></i> <span>Permisos</span>
             </a>
-           <a href="?section=dashboard&report_type=consolidated_area" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'consolidated_area' ? 'active' : '' ?>">
-    <i class="fas fa-building"></i> <span>Por Áreas</span>
-</a>
-                
-           
-            <a href="?section=dashboard&report_type=consolidated_person" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'consolidated_person' ? 'active' : '' ?>">
-                <i class="fas fa-users"></i> <span>Por Personas</span>
-            </a>
             
-            <?php if ($isSuperAdmin): ?>
-                <a href="?section=empleados" class="menu-item <?= $section === 'empleados' ? 'active' : '' ?>">
-                     <i class="fas fa-user-tie"></i> <span>Empleados</span>
+            <?php if (!$isEspectador): ?>
+                <a href="?section=dashboard&report_type=areas&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'areas' ? 'active' : '' ?>">
+                    <i class="fas fa-chart-bar"></i> <span>Por Áreas</span>
                 </a>
-                <a href="?section=administradores" class="menu-item <?= $section === 'administradores' ? 'active' : '' ?>">
-                    <i class="fas fa-users-cog"></i> <span>Administradores</span>
-                </a>
+                
+                <?php if ($isSuperAdmin || $isSupervisor): ?>
+                    <a href="?section=trabajadores" class="menu-item <?= $section === 'trabajadores' ? 'active' : '' ?>">
+                        <i class="fas fa-users"></i> <span>Trabajadores</span>
+                    </a>
+                <?php endif; ?>
+                
+                <?php if ($isSuperAdmin || $isSupervisor): ?>
+                    <a href="?section=history" class="menu-item <?= $section === 'history' ? 'active' : '' ?>">
+                        <i class="fas fa-history"></i> <span>Historial</span>
+                    </a>
+                <?php endif; ?>
+                
+                <?php if ($isSuperAdmin): ?>
+                    <a href="?section=admins" class="menu-item <?= $section === 'admins' ? 'active' : '' ?>">
+                        <i class="fas fa-users-cog"></i> <span>Administradores</span>
+                    </a>
+                <?php endif; ?>
+                
+                <?php if ($isSuperAdmin): ?>
+                    <a href="?section=config" class="menu-item <?= $section === 'config' ? 'active' : '' ?>">
+                        <i class="fas fa-cog"></i> <span>Configuración</span>
+                    </a>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
     </div>
@@ -2156,14 +3090,19 @@ if (isset($_GET['get_admin'])) {
             <h1>
                 <?php if ($section === 'dashboard'): ?>
                     <i class="fas fa-clipboard-list"></i> <?= $reportTitle ?>
-                <?php elseif ($section === 'empleados'): ?>
-                    <i class="fas fa-user-tie"></i> Gestión de Empleados
-                <?php elseif ($section === 'administradores'): ?>
-                    <i class="fas fa-users-cog"></i> Gestión de Administradores
+                <?php elseif ($section === 'admins'): ?>
+                    <i class="fas fa-users-cog"></i> Administradores
+                <?php elseif ($section === 'trabajadores'): ?>
+                    <i class="fas fa-users"></i> Trabajadores
+                <?php elseif ($section === 'config'): ?>
+                    <i class="fas fa-cog"></i> Configuración
+                <?php elseif ($section === 'history'): ?>
+                    <i class="fas fa-history"></i> Historial de Cambios
                 <?php endif; ?>
             </h1>
             <div class="user-info">
-                <span>Bienvenido, <?= htmlspecialchars($_SESSION['admin_username']) ?> (<?= $_SESSION['admin_role'] === 'admin' ? 'Administrador' : 'Supervisor' ?>)</span>
+                <span>Bienvenido, <?= htmlspecialchars($_SESSION['admin_username']) ?> 
+                (<?= $_SESSION['admin_role'] === 'admin' ? 'Administrador' : ($_SESSION['admin_role'] === 'supervisor' ? 'Supervisor' : 'Espectador') ?>)</span>
                 <a href="index.php" class="btn-logout"><i class="fas fa-sign-out-alt"></i> Salir</a>
             </div>
         </div>
@@ -2183,1016 +3122,2043 @@ if (isset($_GET['get_admin'])) {
         <?php endif; ?>
         
         <?php if ($section === 'dashboard'): ?>
-            <div class="card">
-                <form method="get" id="filter-form">
-                    <input type="hidden" name="section" value="dashboard">
-                    <input type="hidden" name="report_type" value="<?= $reportType ?>">
-                    
-                    <div class="filters-form">
+            <!-- Filtros para reportes -->
+            <div class="filters-container">
+                <div class="filters-grid">
+                    <div class="filter-group">
                         <div class="form-group">
                             <label for="fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
-                            <input type="date" id="fecha_inicio" name="fecha_inicio" value="<?= $fechaInicio ?>" required>
+                            <input type="date" id="fecha_inicio" class="form-control" value="<?= $fechaInicio ?>">
                         </div>
-
+                        
                         <div class="form-group">
-    <label for="fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
-    <input type="date" id="fecha_fin" name="fecha_fin" value="<?= $fechaFin ?>" required>
-</div>
-<div class="form-group">
-    <label for="area"><i class="fas fa-sitemap"></i> Área</label>
-    <select id="area" name="area">
-        <option value="">Todas</option>
-        <?php foreach ($AREAS_PREDEFINIDAS as $a): ?>
-            <option value="<?= htmlspecialchars($a) ?>" <?= $area === $a ? 'selected' : '' ?>>
-                <?= htmlspecialchars($a) ?>
-            </option>
-        <?php endforeach; ?>
-    </select>
-</div>
+                            <label for="fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
+                            <input type="date" id="fecha_fin" class="form-control" value="<?= $fechaFin ?>">
+                        </div>
+                    </div>
+                    
+                    <?php if ($reportType === 'areas'): ?>
+                        <div class="form-group">
+                            <label for="tipo_vista"><i class="fas fa-eye"></i> Tipo de Vista</label>
+                            <select id="tipo_vista" class="form-control">
+                                <option value="detallado" <?= $tipoVista === 'detallado' ? 'selected' : '' ?>>Vista Detallada</option>
+                                <option value="total" <?= $tipoVista === 'total' ? 'selected' : '' ?>>Solo Totales</option>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div class="filter-group">
+                        <!-- Nuevos filtros para Área, Cargo y Tipo Personal -->
+                        <div class="form-group">
+                            <label for="filter_area_report"><i class="fas fa-building"></i> Área</label>
+                            <select id="filter_area_report" class="form-control" onchange="updateCargoFilter('report')">
+                                <option value="">Todas las áreas</option>
+                                <?php foreach ($areas as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_cargo_report"><i class="fas fa-briefcase"></i> Cargo</label>
+                            <select id="filter_cargo_report" class="form-control">
+                                <option value="">Todos los cargos</option>
+                                <?php foreach ($positions as $position): ?>
+                                    <option value="<?= htmlspecialchars($position) ?>"><?= htmlspecialchars($position) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="search_input"><i class="fas fa-search"></i> Buscar</label>
+                            <input type="text" id="search_input" class="form-control" placeholder="Buscar en la tabla...">
+                        </div>
+                        
+                        <div class="filter-actions">
+                            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'daily'): ?>
+                                <button type="button" class="btn btn-success" onclick="openManualAttendanceModal()">
+                                    <i class="fas fa-plus"></i> Asistencia
+                                </button>
+                            <?php endif; ?>
+                            
+                            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'permission'): ?>
+                                <button type="button" class="btn btn-info" onclick="openManualPermissionModal()">
+                                    <i class="fas fa-plus"></i> Permiso
+                                </button>
+                            <?php endif; ?>
+                            
+                            <!-- Botón Exportar Excel - SOLO para no espectadores -->
+                            <?php if (!$isEspectador): ?>
+                                <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
+                                    <i class="fas fa-filter"></i> Exportar Filtrado
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-<div class="form-group">
-    <label for="cargo"><i class="fas fa-briefcase"></i> Cargo</label>
-    <select id="cargo" name="cargo">
-        <option value="">Todos</option>
-        <?php 
-        // Si hay un área seleccionada, mostrar solo los cargos de esa área
-        if ($area && isset($CARGOS_POR_AREA[$area])) {
-            foreach ($CARGOS_POR_AREA[$area] as $p): ?>
-                <option value="<?= htmlspecialchars($p) ?>" <?= $cargo === $p ? 'selected' : '' ?>>
-                    <?= htmlspecialchars($p) ?>
-                </option>
-            <?php endforeach;
-        } else {
-            // Mostrar todos los cargos si no hay área seleccionada
-            $todos_los_cargos = [];
-            foreach ($CARGOS_POR_AREA as $cargos) {
-                $todos_los_cargos = array_merge($todos_los_cargos, $cargos);
-            }
-            $todos_los_cargos = array_unique($todos_los_cargos);
-            sort($todos_los_cargos);
-            
-            foreach ($todos_los_cargos as $p): ?>
-                <option value="<?= htmlspecialchars($p) ?>" <?= $cargo === $p ? 'selected' : '' ?>>
-                    <?= htmlspecialchars($p) ?>
-                </option>
-            <?php endforeach;
-        }
-        ?>
-    </select>
-</div>
-
-<div class="form-group">
-    <label for="tipo_personal"><i class="fas fa-user-tag"></i> Tipo Personal</label>
-    <select id="tipo_personal" name="tipo_personal">
-        <option value="">Todos</option>
-        <option value="Docente" <?= $tipoPersonal === 'Docente' ? 'selected' : '' ?>>Docente</option>
-        <option value="Administrativo" <?= $tipoPersonal === 'Administrativo' ? 'selected' : '' ?>>Administrativo</option>
-    </select>
-</div>
-
-<div class="form-group">
-    <label for="busqueda"><i class="fas fa-search"></i> Buscar</label>
-    <input type="text" id="busqueda" name="busqueda" value="<?= htmlspecialchars($busqueda ?? '') ?>" placeholder="DNI o nombre">
-</div>
-</div>
-
-<div class="action-buttons">
-    <?php if ($isSuperAdmin && $reportType === 'consolidated_person'): ?>
-        <button type="button" class="btn btn-success" onclick="openManualAttendanceModal()">
-            <i class="fas fa-plus"></i> Registrar Asistencia
-        </button>
-    <?php endif; ?>
-    
-    <a href="?<?= http_build_query(array_merge($_GET, ['export_excel' => 1])) ?>" class="btn btn-excel">
-        <i class="fas fa-file-excel"></i> Exportar Excel
-    </a>
-</div>
-</form>
-</div>
-
-<div class="card">
-    <h2 class="card-title"><i class="fas fa-table"></i> Resultados</h2>
-    
-    <div class="table-responsive">
-        <?php if (!empty($paginatedData)): ?>
-            <table>
-                <thead>
-                    <tr>
-                        <?php switch ($reportType): 
-                            case 'tardiness': ?>
-                                <th>DNI</th>
-                                <th>NOMBRE</th>
-                                <th>FECHA</th>
-                                <th>HORA ENTRADA MAÑANA</th>
-                                <th>HORA MARCADA MAÑANA</th>
-                                <th>TARDANZA MAÑANA</th>
-                                <th>HORA ENTRADA TARDE</th>
-                                <th>HORA MARCADA TARDE</th>
-                                <th>TARDANZA TARDE</th>
-                                <?php break; ?>
-                                
-                            <?php case 'permission': ?>
-                                <th>DNI</th>
-                                <th>NOMBRE</th>
-                                <th>ÁREA</th>
-                                <th>CARGO</th>
-                                <th>TIPO</th>
-                                <th>FECHA</th>
-                                <th>TIPO PERMISO</th>
-                                <th>MOTIVO</th>
-                                <th>SALIDA</th>
-                                <th>RETORNO</th>
-                                <th>REGISTRO</th>
-                                <?php break; ?>
-                                
-                            <?php case 'consolidated_area': ?>
-                                <th>ÁREA</th>
-                                <th>CARGO</th>
-                                <th>EMPLEADOS</th>
-                                <th>DÍAS</th>
-                                <th>ASISTENCIAS</th>
-                                <th>PERMISOS</th>
-                                <th>TARDANZAS</th>
-                                <th>FALTAS</th>
-                                <th>% ASISTENCIA</th>
-                                <?php break; ?>
-                                
-                            <?php case 'consolidated_person': ?>
-                                <th>DNI</th>
-                                <th>NOMBRE</th>
-                                <th>ÁREA</th>
-                                <th>CARGO</th>
-                                <th>TIPO</th>
-                                <th>DÍAS</th>
-                                <th>ASISTENCIAS</th>
-                                <th>PERMISOS</th>
-                                <th>FALTAS</th>
-                                <th>TARDANZAS</th>
-                                <th>% ASISTENCIA</th>
-                                <?php break; ?>
-                                
-                            <?php default: // daily ?>
-                                <th>FECHA</th>
-                                <th>DNI</th>
-                                <th>NOMBRE</th>
-                                <th>ÁREA</th>
-                                <th>CARGO</th>
-                                <th>TIPO</th>
-                                <th>ENT. MAÑANA</th>
-                                <th>SAL. MAÑANA</th>
-                                <th>ENT. TARDE</th>
-                                <th>SAL. TARDE</th>
-                                <th>REGISTROS</th>
-                        <?php endswitch; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($paginatedData as $row): ?>
-                        <tr>
-                            <?php switch ($reportType): 
-                                case 'tardiness': ?>
-                                    <?php 
-                                    // Combinamos tardanzas de mañana y tarde
-                                    $tardanzasCombinadas = [];
-                                    
-                                    // Procesar tardanzas de mañana
-                                    foreach ($row['tardanzas_manana'] as $tardanza) {
-                                        $tardanzasCombinadas[$tardanza['fecha']] = [
-                                            'manana' => $tardanza,
-                                            'tarde' => null
-                                        ];
-                                    }
-                                    
-                                    // Procesar tardanzas de tarde
-                                    foreach ($row['tardanzas_tarde'] as $tardanza) {
-                                        if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
-                                            $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
-                                        } else {
-                                            $tardanzasCombinadas[$tardanza['fecha']] = [
-                                                'manana' => null,
-                                                'tarde' => $tardanza
-                                            ];
-                                        }
-                                    }
-                                    
-                                    // Mostrar todas las tardanzas combinadas
-                                    foreach ($tardanzasCombinadas as $fecha => $tardanzas): ?>
-                                        <td><?= htmlspecialchars($row['dni']) ?></td>
-                                        <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
-                                        <td><?= $fecha ?></td>
-                                        
-                                        <!-- Datos mañana -->
-                                        <td><?= $tardanzas['manana'] ? $tardanzas['manana']['hora_entrada'] : '-' ?></td>
-                                        <td><?= $tardanzas['manana'] ? $tardanzas['manana']['hora_marcada'] : '-' ?></td>
-                                        <td><?= $tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-' ?></td>
-                                        
-                                        <!-- Datos tarde -->
-                                        <td><?= $tardanzas['tarde'] ? $tardanzas['tarde']['hora_entrada'] : '-' ?></td>
-                                        <td><?= $tardanzas['tarde'] ? $tardanzas['tarde']['hora_marcada'] : '-' ?></td>
-                                        <td><?= $tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-' ?></td>
-                                        </tr><tr>
-                                    <?php endforeach; ?>
-                                    <?php break; ?>
-                                    
-                                <?php case 'permission': ?>
-                                    <td><?= htmlspecialchars($row['dni']) ?></td>
-                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
-                                    <td><?= htmlspecialchars($row['area']) ?></td>
-                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
-                                    <td><?= htmlspecialchars($row['tipo_personal']) ?></td>
-                                    <td><?= date('d/m/Y', strtotime($row['fecha_permiso'])) ?></td>
-                                    <td><?= htmlspecialchars($row['tipo_permiso']) ?></td>
-                                    <td><?= htmlspecialchars($row['motivo']) ?></td>
-                                    <td><?= $row['hora_salida'] ?></td>
-                                    <td><?= $row['hora_retorno'] ?></td>
-                                    <td><?= $row['hora_registro'] ?></td>
-                                    <?php break; ?>
-                                    
-                                <?php case 'consolidated_area': ?>
-                                    <td><?= htmlspecialchars($row['area']) ?></td>
-                                    <td><?= htmlspecialchars($row['cargo']) ?></td>
-                                    <td><?= $row['total_empleados'] ?></td>
-                                    <td><?= $row['total_dias'] ?></td>
-                                    <td><?= $row['total_asistencias'] ?></td>
-                                    <td><?= $row['total_permisos'] ?></td>
-                                    <td><?= $row['total_tardanzas'] ?></td>
-                                    <td><?= $row['total_faltas'] ?></td>
-                                    <td>
-                                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                            <span><?= $row['porcentaje_asistencia'] ?>%</span>
-                                            <div class="progress-bar">
-                                                <div class="progress-bar-fill" style="width: <?= $row['porcentaje_asistencia'] ?>%; background: <?= 
-                                                    $row['porcentaje_asistencia'] >= 90 ? '#4CAF50' : 
-                                                    ($row['porcentaje_asistencia'] >= 70 ? '#FFC107' : '#F44336')
-                                                ?>;"></div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <?php break; ?>
-                                    
-                                <?php case 'consolidated_person': ?>
-                                    <td><?= htmlspecialchars($row['dni']) ?></td>
-                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
-                                    <td><?= htmlspecialchars($row['area']) ?></td>
-                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
-                                    <td><?= htmlspecialchars($row['tipo_personal']) ?></td>
-                                    <td><?= $row['total_dias'] ?></td>
-                                    <td><?= $row['asistencias'] ?></td>
-                                    <td><?= $row['permisos'] ?></td>
-                                    <td><?= $row['faltas'] ?></td>
-                                    <td><?= $row['tardanzas'] ?></td>
-                                    <td>
-                                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                            <span><?= $row['porcentaje_asistencia'] ?>%</span>
-                                            <div class="progress-bar">
-                                                <div class="progress-bar-fill" style="width: <?= $row['porcentaje_asistencia'] ?>%; background: <?= 
-                                                    $row['porcentaje_asistencia'] >= 90 ? '#4CAF50' : 
-                                                    ($row['porcentaje_asistencia'] >= 70 ? '#FFC107' : '#F44336')
-                                                ?>;"></div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <?php break; ?>
-                                    
-                                <?php default: // daily ?>
-                                    <td><?= $row['fecha'] ?></td>
-                                    <td><?= htmlspecialchars($row['dni']) ?></td>
-                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
-                                    <td><?= htmlspecialchars($row['area']) ?></td>
-                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
-                                    <td><?= htmlspecialchars($row['tipo_personal']) ?></td>
-                                    
-                                    <?php if ($row['tipo_personal'] === 'Administrativo'): ?>
-                                        <td><?= ($row['entrada_manana_reg'] ?? '-') ?></td>
-                                        <td><?= ($row['salida_manana_reg'] ?? '-') ?></td>
-                                        <td><?= ($row['entrada_tarde_reg'] ?? '-') ?></td>
-                                        <td><?= ($row['salida_tarde_reg'] ?? '-') ?></td>
-                                    <?php else: ?>
-                                        <td>-</td><td>-</td><td>-</td><td>-</td>
+            <div class="card report-card">
+                <div class="report-header">
+                    <h2 class="card-title" style="color: white; border: none; margin: 0;"><i class="fas fa-table"></i> Resultados</h2>
+                </div>
+                
+                <!-- Vista de tabla para reportes -->
+                <div class="table-responsive">
+                    <?php if (!empty($paginatedData)): ?>
+                        <table class="report-table" id="report-table">
+                            <thead>
+                                <tr>
+                                    <?php if ($reportType !== 'areas'): ?>
+                                        <th style="width: 50px">#</th>
+                                    <?php endif; ?>
+                                    <?php switch ($reportType): 
+                                        case 'tardiness': ?>
+                                            <th>DNI</th>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
+                                            <th>FECHA</th>
+                                            <th>TARDANZA MAÑANA</th>
+                                            <th>TARDANZA TARDE</th>
+                                            <?php break; ?>
+                                            
+                                        <?php case 'permission': ?>
+                                            <th>DNI</th>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
+                                            <th>FECHA</th>
+                                            <th>TIPO PERMISO</th>
+                                            <th>MOTIVO</th>
+                                            <th>SALIDA</th>
+                                            <th>RETORNO</th>
+                                            <th>REGISTRO</th>
+                                            <th>REGISTRADO POR</th>
+                                            <?php if (!$isEspectador): ?>
+                                                <th>ACCIONES</th>
+                                            <?php endif; ?>
+                                            <?php break; ?>
+                                            
+                                        <?php case 'no_asistencia': ?>
+                                            <th>DNI</th>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
+                                            <th>TURNO</th>
+                                            <th>TOTAL FALTAS</th>
+                                            <?php break; ?>
+                                            
+                                        <?php case 'areas': ?>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
+                                            <th>EMPLEADOS</th>
+                                            <th>DÍAS</th>
+                                            <th>ASISTENCIAS</th>
+                                            <th>PERMISOS</th>
+                                            <th>FALTAS</th>
+                                            <th>% ASISTENCIA</th>
+                                            <?php break; ?>
+                                            
+                                        <?php default: // daily ?>
+                                            <th>FECHA</th>
+                                            <th>DNI</th>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
+                                            <th>ENT. MAÑANA</th>
+                                            <th>SAL. MAÑANA</th>
+                                            <th>ENT. TARDE</th>
+                                            <th>SAL. TARDE</th>
+                                            <th>REGISTROS</th>
+                                            <th>REGISTRADO POR</th>
+                                    <?php endswitch; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
+                                <?php foreach ($paginatedData as $row): ?>
+                                    <?php if (isset($row['es_total']) && $row['es_total']): ?>
+                                        <!-- Fila única de totales para SIN ASISTENCIA -->
+                                        <?php if ($reportType === 'no_asistencia'): ?>
+                                            <tr class="total-general-row">
+                                                <td colspan="6" style="text-align: right; font-weight: bold;">TOTALES:</td>
+                                                <td style="font-weight: bold;">MAÑANA: <?= $row['total_faltas_manana'] ?></td>
+                                                <td style="font-weight: bold;">TARDE: <?= $row['total_faltas_tarde'] ?></td>
+                                                <td style="font-weight: bold;">TOTAL: <?= $row['total_general'] ?></td>
+                                            </tr>
+                                        <?php elseif ($reportType === 'tardiness'): ?>
+                                            <!-- Fila única de totales para TARDANZAS -->
+                                            <tr class="total-general-row">
+                                                <td colspan="6" style="text-align: right; font-weight: bold;">TOTALES:</td>
+                                                <td style="font-weight: bold;"><?= $row['total_tardanza_manana'] ?></td>
+                                                <td style="font-weight: bold;"><?= $row['total_tardanza_tarde'] ?></td>
+                                                <td style="font-weight: bold;">TOTAL: <?= $row['total_tardanza'] ?></td>
+                                            </tr>
+                                        <?php endif; ?>
+                                        <?php continue; ?>
                                     <?php endif; ?>
                                     
-                                    <td>
-                                        <?php if (!empty($row['registros_dia'])): ?>
-                                            <div class="registros-vertical">
-                                                <?php foreach ($row['registros_dia'] as $registro): ?>
-                                                    <div class="registro-item"><?= $registro ?></div>
+                                    <tr <?= (isset($row['es_total_area']) ? 'class="total-area-row"' : ($reportType === 'areas' && $row['area'] === 'TOTAL GENERAL' ? 'class="total-general-row"' : '')) ?>
+                                        data-area="<?= htmlspecialchars($row['area'] ?? '') ?>"
+                                        data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>">
+                                        
+                                        <?php if ($reportType !== 'areas'): ?>
+                                            <td style="text-align: center;"><?= $contador++ ?></td>
+                                        <?php endif; ?>
+                                        
+                                        <?php switch ($reportType): 
+                                            case 'tardiness': ?>
+                                                <?php 
+                                                // Combinamos tardanzas de mañana y tarde
+                                                $tardanzasCombinadas = [];
+                                                
+                                                // Procesar tardanzas de mañana
+                                                foreach ($row['tardanzas_manana'] as $tardanza) {
+                                                    $tardanzasCombinadas[$tardanza['fecha']] = [
+                                                        'manana' => $tardanza,
+                                                        'tarde' => null
+                                                    ];
+                                                }
+                                                
+                                                // Procesar tardanzas de tarde
+                                                foreach ($row['tardanzas_tarde'] as $tardanza) {
+                                                    if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
+                                                        $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
+                                                    } else {
+                                                        $tardanzasCombinadas[$tardanza['fecha']] = [
+                                                            'manana' => null,
+                                                            'tarde' => $tardanza
+                                                        ];
+                                                    }
+                                                }
+                                                
+                                                // Mostrar todas las tardanzas combinadas
+                                                $firstRow = true;
+                                                foreach ($tardanzasCombinadas as $fecha => $tardanzas): ?>
+                                                    <?php if (!$firstRow): ?>
+                                                        <tr data-area="<?= htmlspecialchars($row['area'] ?? '') ?>" data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>">
+                                                        <td style="text-align: center;"></td>
+                                                    <?php endif; ?>
+                                                    
+                                                    <td><?= htmlspecialchars($row['dni']) ?></td>
+                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
+                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                    <td class="text-center nowrap"><?= $fecha ?></td>
+                                                    
+                                                    <!-- Datos mañana -->
+                                                    <td class="tardanza-cell text-center">
+                                                        <?= $tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-' ?>
+                                                    </td>
+                                                    
+                                                    <!-- Datos tarde -->
+                                                    <td class="tardanza-cell text-center">
+                                                        <?= $tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-' ?>
+                                                    </td>
+                                                    </tr>
+                                                    <?php $firstRow = false; ?>
                                                 <?php endforeach; ?>
-                                            </div>
-                                        <?php else: ?>
-                                            -
-                                        <?php endif; ?>
-                                    </td>
-                            <?php endswitch; ?>
-                        </tr>
-                        
-                        <?php if ($reportType === 'consolidated_person' && isset($row['detalle_asistencias'])): ?>
-                        <tr class="detail-row">
-                            <td colspan="12">
-                                <table class="detail-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Fecha</th>
-                                            <th>Tipo</th>
-                                            <th>Registros</th>
-                                            <th>Permiso</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($row['detalle_asistencias'] as $detalle): ?>
-                                        <tr>
-                                            <td><?= $detalle['fecha'] ?></td>
-                                            <td>
-                                                <?php if ($detalle['tipo'] === 'Asistencia'): ?>
-                                                    <span class="badge badge-success">Asistencia</span>
-                                                <?php elseif ($detalle['tipo'] === 'Permiso'): ?>
-                                                    <span class="badge badge-info">Permiso</span>
-                                                <?php else: ?>
-                                                    <span class="badge badge-danger">Falta</span>
+                                                <?php break; ?>
+                                                
+                                            <?php case 'permission': ?>
+                                                <td><?= htmlspecialchars($row['dni']) ?></td>
+                                                <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
+                                                <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                <td class="text-center nowrap"><?= date('d/m/Y', strtotime($row['fecha_permiso'])) ?></td>
+                                                <td class="permiso-cell text-center"><?= htmlspecialchars($row['tipo_permiso']) ?></td>
+                                                <td><?= htmlspecialchars($row['motivo']) ?></td>
+                                                <td class="text-center"><?= $row['hora_salida'] ?></td>
+                                                <td class="text-center"><?= $row['hora_retorno'] ?></td>
+                                                <td class="text-center"><?= $row['hora_registro'] ?></td>
+                                                <td class="text-center"><?= htmlspecialchars($row['registrado_por']) ?></td>
+                                                <?php if (!$isEspectador): ?>
+                                                    <td>
+                                                        <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                            <button type="button" class="btn btn-secondary btn-sm" onclick="openEditPermissionModal(<?= $row['id'] ?>)">
+                                                                <i class="fas fa-edit"></i> Editar
+                                                            </button>
+                                                        <?php endif; ?>
+                                                    </td>
                                                 <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php if (!empty($detalle['registros'])): ?>
-                                                    <div class="registros-vertical">
-                                                        <?php foreach ($detalle['registros'] as $registro): ?>
-                                                            <div class="registro-item"><?= $registro ?></div>
-                                                        <?php endforeach; ?>
-                                                    </div>
-                                        <?php else: ?>
-                                            -
-                                        <?php endif; ?>
-                                    </td>
-                                    <td><?= $detalle['permiso'] ?? '-' ?></td>
+                                                <?php break; ?>
+                                                
+                                            <?php case 'no_asistencia': ?>
+                                                <!-- Mostrar faltas por turno -->
+                                                <?php if (!empty($row['faltas_manana'])): ?>
+                                                    <td><?= htmlspecialchars($row['dni']) ?></td>
+                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
+                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                    <td class="text-center">
+                                                        <span class="badge badge-warning">MAÑANA</span>
+                                                    </td>
+                                                    <td class="text-center"><?= $row['total_faltas_manana'] ?></td>
+                                                    </tr><tr data-area="<?= htmlspecialchars($row['area'] ?? '') ?>" data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>"><td style="text-align: center;"><?= $contador++ ?></td>
+                                                <?php endif; ?>
+                                                
+                                                <?php if (!empty($row['faltas_tarde'])): ?>
+                                                    <td><?= htmlspecialchars($row['dni']) ?></td>
+                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
+                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                    <td class="text-center">
+                                                        <span class="badge badge-info">TARDE</span>
+                                                    </td>
+                                                    <td class="text-center"><?= $row['total_faltas_tarde'] ?></td>
+                                                <?php endif; ?>
+                                                <?php break; ?>
+                                                
+                                            <?php case 'areas': ?>
+                                                <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                <td class="text-center"><?= $row['empleados'] ?></td>
+                                                <td class="text-center"><?= $row['dias_totales'] ?></td>
+                                                <td class="text-center"><?= $row['asistencias'] ?></td>
+                                                <td class="text-center"><?= $row['permisos'] ?></td>
+                                                <td class="text-center"><?= $row['faltas'] ?></td>
+                                                <td class="porcentaje-cell <?= 
+                                                    $row['porcentaje_asistencia'] >= 90 ? 'porcentaje-alto' : 
+                                                    ($row['porcentaje_asistencia'] >= 70 ? 'porcentaje-medio' : 'porcentaje-bajo')
+                                                ?>">
+                                                    <?= $row['porcentaje_asistencia'] ?>%
+                                                </td>
+                                                <?php break; ?>
+                                                
+                                            <?php default: // daily ?>
+                                                <td class="text-center nowrap"><?= $row['fecha'] ?></td>
+                                                <td class="text-center"><?= htmlspecialchars($row['dni']) ?></td>
+                                                <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
+                                                <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                
+                                                <!-- Mostrar registros clasificados - SOLO UN REGISTRO POR COLUMNA -->
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['registros_entrada_manana'])): ?>
+                                                        <?= min($row['registros_entrada_manana']) ?>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                                
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['registros_salida_manana'])): ?>
+                                                        <?= min($row['registros_salida_manana']) ?>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                                
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['registros_entrada_tarde'])): ?>
+                                                        <?= min($row['registros_entrada_tarde']) ?>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                                
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['registros_salida_tarde'])): ?>
+                                                        <?= min($row['registros_salida_tarde']) ?>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                                
+                                                <!-- Nueva columna REGISTROS con todos los registros -->
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['todos_registros'])): ?>
+                                                        <div class="registros-vertical">
+                                                            <?php foreach ($row['todos_registros'] as $registro): ?>
+                                                                <div class="registro-item"><?= $registro ?></div>
+                                                            <?php endforeach; ?>
+                                                        </div>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                                
+                                                <!-- Nueva columna REGISTRADO POR con todos los registradores -->
+                                                <td class="text-center">
+                                                    <?php if (!empty($row['todos_registradores'])): ?>
+                                                        <div class="registros-vertical">
+                                                            <?php foreach ($row['todos_registradores'] as $registrador): ?>
+                                                                <div class="registro-item"><?= htmlspecialchars($registrador) ?></div>
+                                                            <?php endforeach; ?>
+                                                        </div>
+                                                    <?php else: ?>
+                                                        -
+                                                    <?php endif; ?>
+                                                </td>
+                                        <?php endswitch; ?>
+                                    </tr>
+                                <?php endforeach; ?>
+
+                                <!-- Fila de totales para permisos -->
+                                <?php if ($reportType === 'permission' && isset($permissionTotals) && !empty($permissionTotals)): ?>
+                                    <tr class="total-general-row">
+                                        <td colspan="<?= $isEspectador ? '13' : '14' ?>" style="text-align: center; font-weight: bold;">
+                                            TOTALES POR TIPO DE PERMISO:
+                                            <?php 
+                                            $totalGeneral = 0;
+                                            foreach ($permissionTotals as $total): 
+                                                $totalGeneral += $total['total'];
+                                            ?>
+                                                <span style="margin: 0 10px;"><?= htmlspecialchars($total['tipo_permiso']) ?>: <?= $total['total'] ?></span>
+                                            <?php endforeach; ?>
+                                            <span style="margin: 0 10px;">TOTAL GENERAL: <?= $totalGeneral ?></span>
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+
+                        <!-- Paginación -->
+                        <?php if ($totalPages > 1): ?>
+                        <div class="pagination">
+                            <?php if ($currentPage > 1): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
+                            <?php endif; ?>
+                            
+                            <?php 
+                            $startPage = max(1, $currentPage - 2);
+                            $endPage = min($totalPages, $currentPage + 2);
+                            
+                            for ($i = $startPage; $i <= $endPage; $i++): ?>
+                                <?php if ($i == $currentPage): ?>
+                                    <span class="active"><?= $i ?></span>
+                                <?php else: ?>
+                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+                                <?php endif; ?>
+                            <?php endfor; ?>
+                            
+                            <?php if ($currentPage < $totalPages): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="no-data">
+                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
+                            <p>No se encontraron datos</p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+        <?php elseif ($section === 'admins'): ?>
+            <!-- Sección de Administradores -->
+
+            <div class="filters-container">
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="search_admin"><i class="fas fa-search"></i> Buscar</label>
+                            <input type="text" id="search_admin" class="form-control" placeholder="Buscar administradores...">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_rol_admin"><i class="fas fa-user-tag"></i> Rol</label>
+                            <select id="filter_rol_admin" class="form-control">
+                                <option value="">Todos los roles</option>
+                                <option value="admin">Administrador</option>
+                                <option value="supervisor">Supervisor</option>
+                                <option value="espectador">Espectador</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_estado_admin"><i class="fas fa-circle"></i> Estado</label>
+                            <select id="filter_estado_admin" class="form-control">
+                                <option value="">Todos los estados</option>
+                                <option value="activo">Activo</option>
+                                <option value="inactivo">Inactivo</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-actions">
+                        <?php if ($isSuperAdmin): ?>
+                            <button type="button" class="btn btn-success" onclick="openAddAdminModal()">
+                                <i class="fas fa-plus"></i> Agregar Administrador
+                            </button>
+                        <?php endif; ?>
+                        
+                        <!-- Botón Exportar Excel - SOLO para no espectadores -->
+                        <?php if (!$isEspectador): ?>
+                            <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
+                                <i class="fas fa-filter"></i> Exportar Filtrado
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title"><i class="fas fa-table"></i> Lista de Administradores</div>
+                <div class="table-responsive">
+                    <?php if (!empty($paginatedAdmins)): ?>
+                        <table id="admins-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>APELLIDOS</th>
+                                    <th>NOMBRES</th>
+                                    <th>ÁREA</th>
+                                    <th>CARGO</th>
+                                    <th>USUARIO</th>
+                                    <th>ROL</th>
+                                    <th>ESTADO</th>
+                                    <th>FECHA CREACIÓN</th>
+                                    <th>HORA</th>
+                                    <th>CREADO POR</th>
+                                    <th>ACCIONES</th>
                                 </tr>
+                            </thead>
+                            <tbody>
+                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
+                                <?php foreach ($paginatedAdmins as $admin): ?>
+                                    <tr data-rol="<?= htmlspecialchars($admin['rol']) ?>" data-estado="<?= htmlspecialchars($admin['estado']) ?>">
+                                        <td><?= $contador++ ?></td>
+                                        <td><?= htmlspecialchars($admin['apellidos']) ?></td>
+                                        <td><?= htmlspecialchars($admin['nombres']) ?></td>
+                                        <td><?= htmlspecialchars($admin['area']) ?></td>
+                                        <td><?= htmlspecialchars($admin['cargo']) ?></td>
+                                        <td><?= htmlspecialchars($admin['usuario']) ?></td>
+                                        <td>
+                                            <span class="badge <?= $admin['rol'] === 'admin' ? 'badge-success' : ($admin['rol'] === 'supervisor' ? 'badge-info' : 'badge-secondary') ?>">
+                                                <?= $admin['rol'] === 'admin' ? 'Administrador' : ($admin['rol'] === 'supervisor' ? 'Supervisor' : 'Espectador') ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge <?= $admin['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
+                                                <?= $admin['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
+                                            </span>
+                                        </td>
+                                        <td><?= date('d/m/Y', strtotime($admin['fecha_creacion'])) ?></td>
+                                        <td><?= date('H:i:s', strtotime($admin['fecha_creacion'])) ?></td>
+                                        <td><?= htmlspecialchars($admin['creado_por_nombre']) ?></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                <?php if ($isSuperAdmin && $admin['id'] != $_SESSION['admin_id']): ?>
+                                                    <button type="button" class="btn btn-secondary btn-sm" onclick="openEditAdminModal(<?= $admin['id'] ?>)">
+                                                        <i class="fas fa-edit"></i> Editar
+                                                    </button>
+                                                    <form method="post" style="display: inline;">
+                                                        <input type="hidden" name="admin_id" value="<?= $admin['id'] ?>">
+                                                        <input type="hidden" name="nuevo_estado" value="<?= $admin['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
+                                                        <button type="submit" name="cambiar_estado_admin" class="btn btn-<?= $admin['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
+                                                            <i class="fas fa-<?= $admin['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
+                                                            <?= $admin['estado'] === 'activo' ? 'Desactivar' : 'Activar' ?>
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            </div>
+                                        </td>
+                                    </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
-                    </td>
-                </tr>
-                <?php endif; ?>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-    
-    <!-- Paginación -->
-    <?php if ($totalPages > 1): ?>
-    <div class="pagination">
-        <?php if ($currentPage > 1): ?>
-            <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
-            <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
-        <?php endif; ?>
-        
-        <?php 
-        $startPage = max(1, $currentPage - 2);
-        $endPage = min($totalPages, $currentPage + 2);
-        
-        for ($i = $startPage; $i <= $endPage; $i++): ?>
-            <?php if ($i == $currentPage): ?>
-                <span class="active"><?= $i ?></span>
-            <?php else: ?>
-                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
-            <?php endif; ?>
-        <?php endfor; ?>
-        
-        <?php if ($currentPage < $totalPages): ?>
-            <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
-            <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
-        <?php endif; ?>
-    </div>
-    <?php endif; ?>
-<?php else: ?>
-    <div class="no-data">
-        <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-        <p>No se encontraron datos con los filtros seleccionados</p>
-    </div>
-<?php endif; ?>
-</div>
-</div>
-<?php elseif ($section === 'empleados' && $isSuperAdmin): ?>
-<div class="card">
-    <div class="action-buttons">
-        <button type="button" class="btn btn-success" onclick="openAddEmployeeModal()">
-            <i class="fas fa-user-plus"></i> Agregar Empleado
-        </button>
-    </div>
-    
-    <div class="search-container">
-        <input type="text" id="search-employee" class="search-input" placeholder="Buscar empleado por nombre o DNI..." onkeyup="filterEmployees()">
-    </div>
-    
-    <h2 class="card-title"><i class="fas fa-user-tie"></i> Lista de Empleados</h2>
-    
-    <div class="table-responsive">
-        <?php if (!empty($employees)): ?>
-            <table id="employees-table">
-                <thead>
-                    <tr>
-                        <th>FOTO</th>
-                        <th>DNI</th>
-                        <th>NOMBRES</th>
-                        <th>APELLIDOS</th>
-                        <th>ÁREA</th>
-                        <th>CARGO</th>
-                        <th>ACCIONES</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($employees as $emp): ?>
-                        <?php if (isset($emp['dni']) && isset($emp['nombres']) && isset($emp['apellidos'])): ?>
-                            <tr class="employee-row" data-search="<?= strtolower(htmlspecialchars($emp['dni'] . ' ' . $emp['nombres'] . ' ' . $emp['apellidos'])) ?>">
-                                <td>
-                                    <?php if (!empty($emp['foto']) && file_exists($emp['foto'])): ?>
-                                        <img src="<?= $emp['foto'] ?>" alt="Foto" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;">
-                                    <?php else: ?>
-                                        <i class="fas fa-user-circle" style="font-size: 2rem; color: #ccc;"></i>
-                                    <?php endif; ?>
-                                </td>
-                                <td><?= htmlspecialchars($emp['dni']) ?></td>
-                                <td><?= htmlspecialchars($emp['nombres']) ?></td>
-                                <td><?= htmlspecialchars($emp['apellidos']) ?></td>
-                                <td><?= htmlspecialchars($emp['area'] ?? '') ?></td>
-                                <td><?= htmlspecialchars($emp['puesto'] ?? '') ?></td>
-                                <td>
-                                    <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="openEditEmployeeModal(<?= $emp['id'] ?>)">
-                                        <i class="fas fa-edit"></i> Editar
-                                    </button>
-                                    <button type="button" class="btn btn-danger" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="confirmDeleteEmployee(<?= $emp['id'] ?>, '<?= htmlspecialchars($emp['nombres'] . ' ' . $emp['apellidos']) ?>')">
-                                        <i class="fas fa-trash"></i> Eliminar
-                                    </button>
-                                </td>
-                            </tr>
-                        <?php endif; ?>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php else: ?>
-            <div class="no-data">
-                <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-                <p>No hay empleados registrados</p>
-            </div>
-        <?php endif; ?>
-    </div>
-</div>
-<?php elseif ($section === 'administradores' && $isSuperAdmin): ?>
-<div class="card">
-    <div class="action-buttons">
-        <button type="button" class="btn btn-success" onclick="openAddAdminModal()">
-            <i class="fas fa-user-plus"></i> Agregar Administrador
-        </button>
-    </div>
-    
-    <div class="search-container">
-        <input type="text" id="search-admin" class="search-input" placeholder="Buscar administrador por nombre..." onkeyup="filterAdmins()">
-    </div>
-    
-    <h2 class="card-title"><i class="fas fa-users-cog"></i> Lista de Administradores</h2>
-    
-    <div class="table-responsive">
-        <?php if (!empty($admins)): ?>
-            <table id="admins-table">
-                <thead>
-                    <tr>
-                        <th>USUARIO</th>
-                        <th>ROL</th>
-                        <th>FECHA CREACIÓN</th>
-                        <th>ACCIONES</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($admins as $admin): ?>
-                        <tr class="admin-row" data-search="<?= strtolower(htmlspecialchars($admin['usuario'])) ?>">
-                            <td><?= htmlspecialchars($admin['usuario']) ?></td>
-                            <td><?= $admin['rol'] === 'admin' ? 'Administrador' : 'Supervisor' ?></td>
-                            <td><?= date('d/m/Y H:i', strtotime($admin['fecha_creacion'])) ?></td>
-                            <td>
-                                <button type="button" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="openEditAdminModal(<?= $admin['id'] ?>)">
-                                    <i class="fas fa-edit"></i> Editar
-                                </button>
-                                <?php if ($admin['id'] != $_SESSION['admin_id']): ?>
-                                    <button type="button" class="btn btn-danger" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="confirmDeleteAdmin(<?= $admin['id'] ?>, '<?= htmlspecialchars($admin['usuario']) ?>')">
-                                        <i class="fas fa-trash"></i> Eliminar
-                                    </button>
-                                <?php else: ?>
-                                    <span class="badge badge-info">Tu cuenta</span>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php else: ?>
-            <div class="no-data">
-                <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-                <p>No hay administradores registrados</p>
-            </div>
-        <?php endif; ?>
-    </div>
-</div>
-<?php endif; ?>
-</div>
 
-<!-- Modal para registro manual de asistencia -->
-<div id="manualAttendanceModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title"><i class="fas fa-user-plus"></i> Registrar Asistencia Manual</h3>
-            <span class="close" onclick="closeModal('manualAttendanceModal')">&times;</span>
-        </div>
-        <form method="post" action="">
-            <div class="modal-body">
-                <div class="form-group">
-                    <label for="empleado_id">Empleado</label>
-                    <select id="empleado_id" name="empleado_id" class="employee-select" required style="width: 100%">
-                        <option value="">Buscar empleado por nombre o DNI...</option>
-                        <?php foreach ($employeesList as $emp): ?>
-                            <?php if (isset($emp['id']) && isset($emp['nombre_completo']) && isset($emp['dni'])): ?>
-                                <option value="<?= htmlspecialchars($emp['id']) ?>">
-                                    <?= htmlspecialchars($emp['nombre_completo']) ?> (<?= htmlspecialchars($emp['dni']) ?>)
-                                </option>
+                        <!-- Paginación -->
+                        <?php if ($totalPages > 1): ?>
+                        <div class="pagination">
+                            <?php if ($currentPage > 1): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
                             <?php endif; ?>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="fecha">Fecha</label>
-                    <input type="date" id="fecha" name="fecha" value="<?= date('Y-m-d') ?>" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="hora">Hora</label>
-                    <input type="time" id="hora" name="hora" value="<?= date('H:i') ?>" required>
+                            
+                            <?php 
+                            $startPage = max(1, $currentPage - 2);
+                            $endPage = min($totalPages, $currentPage + 2);
+                            
+                            for ($i = $startPage; $i <= $endPage; $i++): ?>
+                                <?php if ($i == $currentPage): ?>
+                                    <span class="active"><?= $i ?></span>
+                                <?php else: ?>
+                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+                                <?php endif; ?>
+                            <?php endfor; ?>
+                            
+                            <?php if ($currentPage < $totalPages): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="no-data">
+                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
+                            <p>No se encontraron administradores</p>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('manualAttendanceModal')">Cancelar</button>
-                <button type="submit" class="btn btn-success" name="registrar_asistencia">Registrar</button>
-            </div>
-        </form>
-    </div>
-</div>
 
-<!-- Modal para agregar/editar empleado -->
-<div id="employeeModal" class="modal">
-    <div class="modal-content modal-lg" style="top: 15%; transform: translateY(-15%);">
-        <div class="modal-header">
-            <h3 class="modal-title">
-                <i class="fas fa-user-plus"></i> 
-                <span id="employeeModalTitle">Agregar Nuevo Empleado</span>
-            </h3>
-            <span class="close" onclick="closeModal('employeeModal')">&times;</span>
-        </div>
-        <form method="post" action="" enctype="multipart/form-data" id="employeeForm">
-            <input type="hidden" name="id" id="employee_id" value="">
-            
-            <div class="modal-body">
-                <div class="form-grid">
-                    <div style="text-align: center; grid-column: 1 / -1;">
-                        <img id="employeePhotoPreview" src="" alt="Foto" class="employee-photo" style="display: none;">
-                        <i id="employeePhotoPlaceholder" class="fas fa-user-circle employee-photo" style="font-size: 100px; color: #ccc;"></i>
+        <?php elseif ($section === 'trabajadores'): ?>
+            <!-- Sección de Trabajadores -->
+
+            <div class="filters-container">
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="search_trabajador"><i class="fas fa-search"></i> Buscar</label>
+                            <input type="text" id="search_trabajador" class="form-control" placeholder="Buscar trabajadores...">
+                        </div>
                         
                         <div class="form-group">
-                            <label for="foto">Foto (Opcional)</label>
-                            <input type="file" id="foto" name="foto" accept="image/*" onchange="previewEmployeePhoto(this)">
+                            <label for="filter_area_trabajador"><i class="fas fa-building"></i> Área</label>
+                            <select id="filter_area_trabajador" class="form-control" onchange="updateCargoFilter('trabajador')">
+                                <option value="">Todas las áreas</option>
+                                <?php foreach ($areas as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_cargo_trabajador"><i class="fas fa-briefcase"></i> Cargo</label>
+                            <select id="filter_cargo_trabajador" class="form-control">
+                                <option value="">Todos los cargos</option>
+                                <?php foreach ($positions as $position): ?>
+                                    <option value="<?= htmlspecialchars($position) ?>"><?= htmlspecialchars($position) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_estado_trabajador"><i class="fas fa-circle"></i> Estado</label>
+                            <select id="filter_estado_trabajador" class="form-control">
+                                <option value="">Todos los estados</option>
+                                <option value="activo">Activo</option>
+                                <option value="inactivo">Inactivo</option>
+                            </select>
                         </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="dni">DNI</label>
-                        <input type="text" id="dni" name="dni" required maxlength="8" pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)" value="">
+                    <div class="filter-actions">
+                        <?php if ($isSuperAdmin || $isSupervisor): ?>
+                            <button type="button" class="btn btn-success" onclick="openAddEmpleadoModal()">
+                                <i class="fas fa-plus"></i> Agregar Trabajador
+                            </button>
+                        <?php endif; ?>
+                        
+                        <!-- Botón Exportar Excel - SOLO para no espectadores -->
+                        <?php if (!$isEspectador): ?>
+                            <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
+                                <i class="fas fa-filter"></i> Exportar Filtrado
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title"><i class="fas fa-table"></i> Lista de Trabajadores</div>
+                <div class="table-responsive">
+                    <?php if (!empty($paginatedEmployees)): ?>
+                        <table id="trabajadores-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>FOTO</th>
+                                    <th>DNI</th>
+                                    <th>APELLIDOS</th>
+                                    <th>NOMBRES</th>
+                                    <th>ÁREA</th>
+                                    <th>CARGO</th>
+                                    <th>ESTADO</th>
+                                    <th>CREADO POR</th>
+                                    <th>ACCIONES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
+                                <?php foreach ($paginatedEmployees as $empleado): ?>
+                                    <tr data-area="<?= htmlspecialchars($empleado['area']) ?>" data-cargo="<?= htmlspecialchars($empleado['puesto']) ?>" data-estado="<?= htmlspecialchars($empleado['estado']) ?>">
+                                        <td><?= $contador++ ?></td>
+                                        <td>
+                                            <?php if (!empty($empleado['foto']) && file_exists(FOTO_DIR . $empleado['foto'])): ?>
+                                                <img src="<?= FOTO_DIR . $empleado['foto'] ?>" class="employee-photo" onclick="openImageModal('<?= FOTO_DIR . $empleado['foto'] ?>')">
+                                            <?php else: ?>
+                                                <div style="width: 50px; height: 50px; border-radius: 50%; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fas fa-user" style="color: #666;"></i>
+                                                </div>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?= htmlspecialchars($empleado['dni']) ?></td>
+                                        <td><?= htmlspecialchars($empleado['apellidos']) ?></td>
+                                        <td><?= htmlspecialchars($empleado['nombres']) ?></td>
+                                        <td class="area-cell"><?= htmlspecialchars($empleado['area']) ?></td>
+                                        <td><?= htmlspecialchars($empleado['puesto']) ?></td>
+                                        <td>
+                                            <span class="badge <?= $empleado['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
+                                                <?= $empleado['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
+                                            </span>
+                                        </td>
+                                        <td><?= htmlspecialchars($empleado['creado_por_nombre']) ?></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                    <button type='button' class='btn btn-secondary btn-sm' onclick='openEditEmpleadoModal(<?= $empleado['id'] ?>)'>
+                                                        <i class='fas fa-edit'></i> Editar
+                                                    </button>
+                                                <?php endif; ?>
+                                                
+                                                <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                    <form method="post" style="display: inline;">
+                                                        <input type="hidden" name="empleado_id" value="<?= $empleado['id'] ?>">
+                                                        <input type="hidden" name="nuevo_estado" value="<?= $empleado['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
+                                                        <button type="submit" name="cambiar_estado_empleado" class="btn btn-<?= $empleado['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
+                                                            <i class="fas fa-<?= $empleado['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
+                                                            <?= $empleado['estado'] === 'activo' ? ' Desactivar' : ' Activar' ?>
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+
+                        <!-- Paginación -->
+                        <?php if ($totalPages > 1): ?>
+                        <div class="pagination">
+                            <?php if ($currentPage > 1): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
+                            <?php endif; ?>
+                            
+                            <?php 
+                            $startPage = max(1, $currentPage - 2);
+                            $endPage = min($totalPages, $currentPage + 2);
+                            
+                            for ($i = $startPage; $i <= $endPage; $i++): ?>
+                                <?php if ($i == $currentPage): ?>
+                                    <span class="active"><?= $i ?></span>
+                                <?php else: ?>
+                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+                                <?php endif; ?>
+                            <?php endfor; ?>
+                            
+                            <?php if ($currentPage < $totalPages): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="no-data">
+                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
+                            <p>No se encontraron trabajadores</p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+        <?php elseif ($section === 'config'): ?>
+            <!-- Sección de Configuración -->
+            <div class="card">
+                <div class="card-title"><i class="fas fa-cog"></i> Configuración del Sistema</div>
+                <form method="post" action="">
+                    <div style="max-width: 500px; margin: 0 auto;">
+                        <div class="form-group">
+                            <label for="minutos_tolerancia">Minutos de Tolerancia para Tardanzas</label>
+                            <input type="number" id="minutos_tolerancia" name="minutos_tolerancia" 
+                                   class="form-control" value="<?= $minutosTolerancia ?>" 
+                                   min="0" max="60" required>
+                            <small class="text-muted">Establece los minutos de tolerancia antes de considerar una tardanza (0-60 minutos)</small>
+                        </div>
+                        <div style="text-align: center; margin-top: 2rem;">
+                            <button type="submit" name="actualizar_configuracion" class="btn btn-success">
+                                <i class="fas fa-save"></i> Guardar Configuración
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+        <?php elseif ($section === 'history'): ?>
+            <!-- Sección de Historial -->
+            <div class="filters-container">
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="historial_fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
+                            <input type="date" id="historial_fecha_inicio" name="historial_fecha_inicio" 
+                                   class="form-control" value="<?= $historialFechaInicio ?>">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
+                            <input type="date" id="historial_fecha_fin" name="historial_fecha_fin" 
+                                   class="form-control" value="<?= $historialFechaFin ?>">
+                        </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="nombres">Nombres</label>
-                        <input type="text" id="nombres" name="nombres" required value="">
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="historial_tabla"><i class="fas fa-table"></i> Tabla Afectada</label>
+                            <select id="historial_tabla" name="historial_tabla" class="form-control">
+                                <option value="">Todas las tablas</option>
+                                <option value="empleados" <?= $historialTabla === 'empleados' ? 'selected' : '' ?>>Empleados</option>
+                                <option value="usuarios_admin" <?= $historialTabla === 'usuarios_admin' ? 'selected' : '' ?>>Administradores</option>
+                                <option value="permisos" <?= $historialTabla === 'permisos' ? 'selected' : '' ?>>Permisos</option>
+                                <option value="registros_asistencia" <?= $historialTabla === 'registros_asistencia' ? 'selected' : '' ?>>Asistencias</option>
+                                <option value="configuracion_sistema" <?= $historialTabla === 'configuracion_sistema' ? 'selected' : '' ?>>Configuración</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_accion"><i class="fas fa-bolt"></i> Acción</label>
+                            <select id="historial_accion" name="historial_accion" class="form-control">
+                                <option value="">Todas las acciones</option>
+                                <option value="INSERT" <?= $historialAccion === 'INSERT' ? 'selected' : '' ?>>INSERT</option>
+                                <option value="UPDATE" <?= $historialAccion === 'UPDATE' ? 'selected' : '' ?>>UPDATE</option>
+                                <option value="DELETE" <?= $historialAccion === 'DELETE' ? 'selected' : '' ?>>DELETE</option>
+                            </select>
+                        </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="apellidos">Apellidos</label>
-                        <input type="text" id="apellidos" name="apellidos" required value="">
+                    <div class="filter-group">
+                        <div class="form-group">
+                            <label for="historial_creado_por"><i class="fas fa-user"></i> Modificado Por</label>
+                            <input type="text" id="historial_creado_por" name="historial_creado_por" 
+                                   class="form-control" value="<?= htmlspecialchars($historialCreadoPor) ?>" 
+                                   placeholder="Buscar por usuario...">
+                        </div>
+                        
+                        <div class="filter-actions">
+                            <button type="button" onclick="applyHistoryFilters()" class="btn btn-primary">
+                                <i class="fas fa-filter"></i> Aplicar Filtros
+                            </button>
+                            
+                            <!-- Botón Exportar Excel - SOLO para no espectadores -->
+                            <?php if (!$isEspectador): ?>
+                                <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
+                                    <i class="fas fa-file-excel"></i> Exportar Filtrado
+                                </button>
+                            <?php endif; ?>
+                        </div>
                     </div>
-                    
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title"><i class="fas fa-table"></i> Historial de Cambios</div>
+                <div class="table-responsive">
+                    <?php if (!empty($paginatedHistorial)): ?>
+                        <table id="history-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>TABLA AFECTADA</th>
+                                    <th>USUARIO AFECTADO</th>
+                                    <th>ACCION</th>
+                                    <th>CAMPO MODIFICADO</th>
+                                    <th>VALOR ANTERIOR</th>
+                                    <th>VALOR NUEVO</th>
+                                    <th>MOTIVO</th>
+                                    <th>MODIFICADO POR</th>
+                                    <th>FECHA MODIFICACION</th>
+                                    <th>HORA MODIFICACION</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
+                                <?php foreach ($paginatedHistorial as $historial): ?>
+                                    <tr>
+                                        <td><?= $contador++ ?></td>
+                                        <td>
+                                            <span class="badge badge-info"><?= htmlspecialchars($historial['tabla_afectada']) ?></span>
+                                        </td>
+                                        <td><?= htmlspecialchars($historial['usuario_afectado']) ?></td>
+                                        <td>
+                                            <span class="badge <?= 
+                                                $historial['accion'] === 'INSERT' ? 'badge-success' : 
+                                                ($historial['accion'] === 'UPDATE' ? 'badge-warning' : 'badge-danger')
+                                            ?>">
+                                                <?= htmlspecialchars($historial['accion']) ?>
+                                            </span>
+                                        </td>
+                                        <td><?= htmlspecialchars($historial['campo_modificado']) ?></td>
+                                        <td><?= htmlspecialchars($historial['valor_anterior']) ?></td>
+                                        <td><?= htmlspecialchars($historial['valor_nuevo']) ?></td>
+                                        <td><?= htmlspecialchars($historial['motivo']) ?></td>
+                                        <td><?= htmlspecialchars($historial['modificado_por_nombre']) ?></td>
+                                        <td><?= date('d/m/Y', strtotime($historial['fecha_modificacion'])) ?></td>
+                                        <td><?= date('H:i:s', strtotime($historial['fecha_modificacion'])) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+
+                        <!-- Paginación -->
+                        <?php if ($totalPages > 1): ?>
+                        <div class="pagination">
+                            <?php if ($currentPage > 1): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
+                            <?php endif; ?>
+                            
+                            <?php 
+                            $startPage = max(1, $currentPage - 2);
+                            $endPage = min($totalPages, $currentPage + 2);
+                            
+                            for ($i = $startPage; $i <= $endPage; $i++): ?>
+                                <?php if ($i == $currentPage): ?>
+                                    <span class="active"><?= $i ?></span>
+                                <?php else: ?>
+                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+                                <?php endif; ?>
+                            <?php endfor; ?>
+                            
+                            <?php if ($currentPage < $totalPages): ?>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
+                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="no-data">
+                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
+                            <p>No se encontraron registros en el historial</p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- Modal para agregar empleado - MEJORADO: Diseño horizontal -->
+    <div id="addEmpleadoModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-user-plus"></i> Agregar Trabajador</h3>
+                <span class="close" onclick="closeModal('addEmpleadoModal')">&times;</span>
+            </div>
+            <form method="post" action="" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="empleado-form-container">
+                        <div class="form-group">
+                            <label for="dni">DNI</label>
+                            <input type="text" id="dni" name="dni" required class="form-control" placeholder="Ingrese DNI">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="nombres">Nombres</label>
+                            <input type="text" id="nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="apellidos">Apellidos</label>
+                            <input type="text" id="apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="area">Área</label>
+                            <select id="area" name="area" required class="form-control" onchange="updateEmpleadoCargos()">
+                                <option value="">Seleccione área</option>
+                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="cargo">Cargo</label>
+                            <select id="cargo" name="cargo" required class="form-control">
+                                <option value="">Primero seleccione un área</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="inicio_contrato">Inicio de Contrato</label>
+                            <input type="date" id="inicio_contrato" name="inicio_contrato" required class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="fin_contrato">Fin de Contrato</label>
+                            <input type="date" id="fin_contrato" name="fin_contrato" class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="tipo_personal">Tipo de Personal</label>
+                            <select id="tipo_personal" name="tipo_personal" required class="form-control" onchange="toggleHorarioFields()">
+                                <option value="">Seleccione tipo</option>
+                                <option value="Docente">Docente</option>
+                                <option value="Administrativo">Administrativo</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Campos de horario (solo para administrativos) -->
+                        <div id="horarioFields" class="horario-fields hidden">
+                            <div class="form-group">
+                                <label for="entrada_manana">Entrada Mañana</label>
+                                <input type="time" id="entrada_manana" name="entrada_manana" class="form-control" value="08:00">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="salida_manana">Salida Mañana</label>
+                                <input type="time" id="salida_manana" name="salida_manana" class="form-control" value="13:00">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="entrada_tarde">Entrada Tarde</label>
+                                <input type="time" id="entrada_tarde" name="entrada_tarde" class="form-control" value="16:00">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="salida_tarde">Salida Tarde</label>
+                                <input type="time" id="salida_tarde" name="salida_tarde" class="form-control" value="19:00">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="foto">Foto</label>
+                            <div class="photo-preview-container">
+                                <img id="photoPreview" src="" class="photo-preview" style="display: none;">
+                                <div class="photo-upload">
+                                    <input type="file" id="foto" name="foto" class="form-control" accept="image/*" onchange="previewPhoto(this)">
+                                    <small class="text-muted">Formatos aceptados: JPG, PNG, GIF (Máx. 2MB)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('addEmpleadoModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="agregar_empleado">Agregar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para editar empleado - MEJORADO: Diseño horizontal -->
+    <div id="editEmpleadoModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-edit"></i> Editar Trabajador</h3>
+                <span class="close" onclick="closeModal('editEmpleadoModal')">&times;</span>
+            </div>
+            <form method="post" action="" enctype="multipart/form-data">
+                <input type="hidden" name="empleado_id" id="edit_empleado_id">
+                
+                <div class="modal-body">
+                    <div class="empleado-form-container">
+                        <div class="form-group">
+                            <label for="edit_dni">DNI</label>
+                            <input type="text" id="edit_dni" name="dni" required class="form-control" placeholder="Ingrese DNI">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_nombres">Nombres</label>
+                            <input type="text" id="edit_nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_apellidos">Apellidos</label>
+                            <input type="text" id="edit_apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_area">Área</label>
+                            <select id="edit_area" name="area" required class="form-control" onchange="updateEditEmpleadoCargos()">
+                                <option value="">Seleccione área</option>
+                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_cargo">Cargo</label>
+                            <select id="edit_cargo" name="cargo" required class="form-control">
+                                <option value="">Primero seleccione un área</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_inicio_contrato">Inicio de Contrato</label>
+                            <input type="date" id="edit_inicio_contrato" name="inicio_contrato" required class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_fin_contrato">Fin de Contrato</label>
+                            <input type="date" id="edit_fin_contrato" name="fin_contrato" class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_tipo_personal">Tipo de Personal</label>
+                            <select id="edit_tipo_personal" name="tipo_personal" required class="form-control" onchange="toggleEditHorarioFields()">
+                                <option value="">Seleccione tipo</option>
+                                <option value="Docente">Docente</option>
+                                <option value="Administrativo">Administrativo</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Campos de horario (solo para administrativos) -->
+                        <div id="editHorarioFields" class="horario-fields hidden">
+                            <div class="form-group">
+                                <label for="edit_entrada_manana">Entrada Mañana</label>
+                                <input type="time" id="edit_entrada_manana" name="entrada_manana" class="form-control">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="edit_salida_manana">Salida Mañana</label>
+                                <input type="time" id="edit_salida_manana" name="salida_manana" class="form-control">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="edit_entrada_tarde">Entrada Tarde</label>
+                                <input type="time" id="edit_entrada_tarde" name="entrada_tarde" class="form-control">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="edit_salida_tarde">Salida Tarde</label>
+                                <input type="time" id="edit_salida_tarde" name="salida_tarde" class="form-control">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_foto">Foto</label>
+                            <div class="photo-preview-container">
+                                <img id="editPhotoPreview" src="" class="photo-preview">
+                                <div class="photo-upload">
+                                    <input type="file" id="edit_foto" name="foto" class="form-control" accept="image/*" onchange="previewEditPhoto(this)">
+                                    <small class="text-muted">Dejar vacío para mantener la foto actual. Formatos: JPG, PNG, GIF (Máx. 2MB)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editEmpleadoModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="editar_empleado">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para registro manual de asistencia -->
+    <div id="manualAttendanceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-user-plus"></i> Registrar Asistencia Manual</h3>
+                <span class="close" onclick="closeModal('manualAttendanceModal')">&times;</span>
+            </div>
+            <form method="post" action="">
+                <div class="modal-body">
                     <div class="form-group">
-                        <label for="area">Área</label>
-                        <select id="area" name="area" required>
-                            <option value="">Seleccione un área</option>
-                            <?php foreach ($AREAS_PREDEFINIDAS as $a): ?>
-                                <option value="<?= htmlspecialchars($a) ?>"><?= htmlspecialchars($a) ?></option>
+                        <label for="empleado_id">Empleado</label>
+                        <select id="empleado_id" name="empleado_id" class="employee-select form-control" required style="width: 100%">
+                            <option value="">Buscar empleado por nombre o DNI...</option>
+                            <?php foreach ($employeesList as $emp): ?>
+                                <?php if (isset($emp['id']) && isset($emp['nombre_completo']) && isset($emp['dni'])): ?>
+                                    <option value="<?= htmlspecialchars($emp['id']) ?>">
+                                        <?= htmlspecialchars($emp['nombre_completo']) ?> (<?= htmlspecialchars($emp['dni']) ?>)
+                                    </option>
+                                <?php endif; ?>
                             <?php endforeach; ?>
                         </select>
                     </div>
                     
                     <div class="form-group">
-                        <label for="puesto">Cargo</label>
-                        <select id="puesto" name="puesto" required>
-                            <option value="">Seleccione un cargo</option>
+                        <label for="fecha">Fecha</label>
+                        <input type="date" id="fecha" name="fecha" value="<?= date('Y-m-d') ?>" required class="form-control">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="hora">Hora (HH:MM:SS)</label>
+                        <input type="time" id="hora" name="hora" value="<?= date('H:i:s') ?>" step="1" required class="form-control">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('manualAttendanceModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="registrar_asistencia">Registrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para registro manual de permiso -->
+    <div id="manualPermissionModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-file-signature"></i> Registrar Permiso Manual</h3>
+                <span class="close" onclick="closeModal('manualPermissionModal')">&times;</span>
+            </div>
+            <form method="post" action="">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="permiso_empleado_id">Empleado</label>
+                        <select id="permiso_empleado_id" name="empleado_id" class="employee-select form-control" required style="width: 100%">
+                            <option value="">Buscar empleado por nombre o DNI...</option>
+                            <?php foreach ($employeesList as $emp): ?>
+                                <?php if (isset($emp['id']) && isset($emp['nombre_completo']) && isset($emp['dni'])): ?>
+                                    <option value="<?= htmlspecialchars($emp['id']) ?>">
+                                        <?= htmlspecialchars($emp['nombre_completo']) ?> (<?= htmlspecialchars($emp['dni']) ?>)
+                                    </option>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                     
                     <div class="form-group">
-                        <label for="inicio_contrato">Inicio de Contrato</label>
-                        <input type="date" id="inicio_contrato" name="inicio_contrato" required value="">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="fin_contrato">Fin de Contrato</label>
-                        <input type="date" id="fin_contrato" name="fin_contrato" required value="">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="tipo_personal">Tipo de Personal</label>
-                        <select id="tipo_personal" name="tipo_personal" required>
-                            <option value="Docente">Docente</option>
-                            <option value="Administrativo">Administrativo</option>
+                        <label for="tipo_permiso">Tipo de Permiso</label>
+                        <select id="tipo_permiso" name="tipo_permiso" required class="form-control">
+                            <option value="">Seleccione tipo de permiso</option>
+                            <option value="Personal">Personal</option>
+                            <option value="Médico">Médico</option>
+                            <option value="Familiar">Familiar</option>
+                            <option value="Otros">Otros</option>
                         </select>
                     </div>
                     
-                    <div id="horarios-container" style="grid-column: 1 / -1; display: none;">
-                        <h4>Horarios</h4>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
-                            <div class="form-group">
-                                <label for="entrada_manana">Entrada Mañana</label>
-                                <input type="time" id="entrada_manana" name="entrada_manana" value="08:00">
-                            </div>
-                            
-                            <div class="form-group">
-                                <label for="salida_manana">Salida Mañana</label>
-                                <input type="time" id="salida_manana" name="salida_manana" value="13:00">
-                            </div>
-                            
-                            <div class="form-group">
-                                <label for="entrada_tarde">Entrada Tarde</label>
-                                <input type="time" id="entrada_tarde" name="entrada_tarde" value="14:00">
-                            </div>
-                            
-                            <div class="form-group">
-                                <label for="salida_tarde">Salida Tarde</label>
-                                <input type="time" id="salida_tarde" name="salida_tarde" value="18:00">
-                            </div>
+                    <div class="form-group">
+                        <label for="motivo">Motivo</label>
+                        <textarea id="motivo" name="motivo" rows="3" required placeholder="Describa el motivo del permiso..." class="form-control"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="fecha_permiso">Fecha del Permiso</label>
+                        <input type="date" id="fecha_permiso" name="fecha_permiso" value="<?= date('Y-m-d') ?>" required class="form-control">
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div class="form-group">
+                            <label for="hora_salida">Hora de Salida</label>
+                            <input type="time" id="hora_salida" name="hora_salida" value="08:00" required class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="hora_retorno">Hora de Retorno</label>
+                            <input type="time" id="hora_retorno" name="hora_retorno" value="13:00" required class="form-control">
                         </div>
                     </div>
                 </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('employeeModal')">Cancelar</button>
-                <button type="submit" class="btn btn-success" name="agregar_empleado" id="employeeSubmitBtn">Guardar</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- Modal para agregar/editar administrador -->
-<div id="adminModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title">
-                <i class="fas fa-user-plus"></i> 
-                <span id="adminModalTitle">Agregar Administrador</span>
-            </h3>
-            <span class="close" onclick="closeModal('adminModal')">&times;</span>
-        </div>
-        <form method="post" action="" id="adminForm">
-            <input type="hidden" name="id" id="admin_id" value="">
-            
-            <div class="modal-body">
-                <div class="form-group">
-                    <label for="usuario">Usuario</label>
-                    <input type="text" id="usuario" name="usuario" required value="">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('manualPermissionModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="registrar_permiso_manual">Registrar</button>
                 </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para editar permiso -->
+    <div id="editPermissionModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-edit"></i> Editar Permiso</h3>
+                <span class="close" onclick="closeModal('editPermissionModal')">&times;</span>
+            </div>
+            <form method="post" action="">
+                <input type="hidden" name="permiso_id" id="edit_permiso_id">
                 
-                <div class="form-group">
-                    <label for="contrasena" id="contrasenaLabel">Contraseña</label>
-                    <input type="password" id="contrasena" name="contrasena" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="rol">Rol</label>
-                    <select id="rol" name="rol" required>
-                        <option value="admin">Administrador</option>
-                        <option value="supervisor">Supervisor</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('adminModal')">Cancelar</button>
-                <button type="submit" class="btn btn-success" name="agregar_admin" id="adminSubmitBtn">Guardar</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- Modal de confirmación para eliminar empleado -->
-<div id="confirmDeleteEmployeeModal" class="modal">
-    <div class="modal-content confirm-modal">
-        <div class="modal-header">
-            <h3 class="modal-title">Confirmar Eliminación</h3>
-            <span class="close" onclick="closeModal('confirmDeleteEmployeeModal')">&times;</span>
-        </div>
-        <div class="modal-body">
-            <div class="icon">
-                <i class="fas fa-exclamation-triangle"></i>
-            </div>
-            <div class="message">
-                ¿Estás seguro de eliminar al empleado <strong id="deleteEmployeeName"></strong>?
-            </div>
-            <div class="buttons">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('confirmDeleteEmployeeModal')">Cancelar</button>
-                <a href="#" class="btn btn-danger" id="confirmDeleteEmployeeBtn">Eliminar</a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Modal de confirmación para eliminar administrador -->
-<div id="confirmDeleteAdminModal" class="modal">
-    <div class="modal-content confirm-modal">
-        <div class="modal-header">
-            <h3 class="modal-title">Confirmar Eliminación</h3>
-            <span class="close" onclick="closeModal('confirmDeleteAdminModal')">&times;</span>
-        </div>
-
-         <div class="modal-body">
-            <div class="icon">
-                <i class="fas fa-exclamation-triangle"></i>
-            </div>
-            <div class="message">
-                ¿Estás seguro de eliminar al administrador <strong id="deleteAdminName"></strong>?
-            </div>
-            <div class="buttons">
-                <button type="button" class="btn btn-secondary" onclick="closeModal('confirmDeleteAdminModal')">Cancelar</button>
-                <a href="#" class="btn btn-danger" id="confirmDeleteAdminBtn">Eliminar</a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
-<script>
-    // Inicializar Select2 para el select de empleados
-    $(document).ready(function() {
-        $('.employee-select').select2({
-            placeholder: "Buscar empleado por nombre o DNI...",
-            minimumInputLength: 2,
-            ajax: {
-                url: '?search_employees=1',
-                dataType: 'json',
-                delay: 250,
-                data: function(params) {
-                    return {
-                        term: params.term
-                    };
-                },
-                processResults: function(data) {
-                    // Validar que los datos tengan la estructura esperada
-                    var validData = data.filter(function(item) {
-                        return item && item.id && item.nombre_completo && item.dni;
-                    });
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="edit_tipo_permiso">Tipo de Permiso</label>
+                        <select id="edit_tipo_permiso" name="tipo_permiso" required class="form-control">
+                            <option value="">Seleccione tipo de permiso</option>
+                            <option value="Personal">Personal</option>
+                            <option value="Médico">Médico</option>
+                            <option value="Familiar">Familiar</option>
+                            <option value="Otros">Otros</option>
+                        </select>
+                    </div>
                     
-                    return {
-                        results: validData.map(function(item) {
-                            return {
-                                id: item.id,
-                                text: item.nombre_completo + ' (' + item.dni + ')'
-                            };
-                        })
-                    };
-                },
-                cache: true
-            }
+                    <div class="form-group">
+                        <label for="edit_motivo">Motivo</label>
+                        <textarea id="edit_motivo" name="motivo" rows="3" required placeholder="Describa el motivo del permiso..." class="form-control"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_fecha_permiso">Fecha del Permiso</label>
+                        <input type="date" id="edit_fecha_permiso" name="fecha_permiso" required class="form-control">
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div class="form-group">
+                            <label for="edit_hora_salida">Hora de Salida</label>
+                            <input type="time" id="edit_hora_salida" name="hora_salida" required class="form-control">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_hora_retorno">Hora de Retorno</label>
+                            <input type="time" id="edit_hora_retorno" name="hora_retorno" required class="form-control">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editPermissionModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="editar_permiso">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para agregar administrador - MEJORADO: Cargos dinámicos por área -->
+    <div id="addAdminModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-user-plus"></i> Agregar Administrador</h3>
+                <span class="close" onclick="closeModal('addAdminModal')">&times;</span>
+            </div>
+            <form method="post" action="" onsubmit="return validateAdminForm(this)">
+                <div class="modal-body">
+                    <div class="admin-form-container">
+                        <div class="form-group">
+                            <label for="nombres">Nombres</label>
+                            <input type="text" id="nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="apellidos">Apellidos</label>
+                            <input type="text" id="apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="area">Área</label>
+                            <select id="area" name="area" required class="form-control" onchange="updateAdminCargos()">
+                                <option value="">Seleccione área</option>
+                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="cargo">Cargo</label>
+                            <select id="cargo" name="cargo" required class="form-control">
+                                <option value="">Primero seleccione un área</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="usuario">Usuario</label>
+                            <input type="text" id="usuario" name="usuario" required class="form-control" placeholder="Ingrese usuario">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password">Contraseña</label>
+                            <input type="password" id="password" name="password" required class="form-control" placeholder="Ingrese contraseña (mínimo 4 caracteres)" minlength="4">
+                            <small class="text-muted">La contraseña debe tener al menos 4 caracteres</small>
+                        </div>
+                        
+                        <div class="form-group form-horizontal-full">
+                            <label for="rol">Rol</label>
+                            <select id="rol" name="rol" required class="form-control">
+                                <option value="">Seleccione rol</option>
+                                <option value="admin">Administrador</option>
+                                <option value="supervisor">Supervisor</option>
+                                <option value="espectador">Espectador</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('addAdminModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="agregar_admin">Agregar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para editar administrador - MEJORADO: Cargos dinámicos por área -->
+    <div id="editAdminModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-edit"></i> Editar Administrador</h3>
+                <span class="close" onclick="closeModal('editAdminModal')">&times;</span>
+            </div>
+            <form method="post" action="" onsubmit="return validateEditAdminForm(this)">
+                <input type="hidden" name="admin_id" id="edit_admin_id">
+                
+                <div class="modal-body">
+                    <div class="admin-form-container">
+                        <div class="form-group">
+                            <label for="edit_nombres">Nombres</label>
+                            <input type="text" id="edit_nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_apellidos">Apellidos</label>
+                            <input type="text" id="edit_apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_area">Área</label>
+                            <select id="edit_area" name="area" required class="form-control" onchange="updateEditAdminCargos()">
+                                <option value="">Seleccione área</option>
+                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_cargo">Cargo</label>
+                            <select id="edit_cargo" name="cargo" required class="form-control">
+                                <option value="">Primero seleccione un área</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_usuario">Usuario</label>
+                            <input type="text" id="edit_usuario" name="usuario" required class="form-control" placeholder="Ingrese usuario">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="edit_password">Nueva Contraseña</label>
+                            <input type="password" id="edit_password" name="password" class="form-control" placeholder="Dejar vacío para mantener la actual" minlength="4">
+                            <small class="text-muted">Dejar vacío para mantener la contraseña actual. Mínimo 4 caracteres si se cambia.</small>
+                        </div>
+                        
+                        <div class="form-group form-horizontal-full">
+                            <label for="edit_rol">Rol</label>
+                            <select id="edit_rol" name="rol" required class="form-control">
+                                <option value="">Seleccione rol</option>
+                                <option value="admin">Administrador</option>
+                                <option value="supervisor">Supervisor</option>
+                                <option value="espectador">Espectador</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editAdminModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="editar_admin">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para imagen ampliada - MEJORADO -->
+    <div id="imageModal" class="image-modal">
+        <span class="close-image" onclick="closeImageModal()">&times;</span>
+        <img class="image-modal-content" id="modalImage">
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+    <script>
+        // Inicializar Select2 para los selects
+        $(document).ready(function() {
+            $('.employee-select').select2({
+                placeholder: "Buscar empleado por nombre o DNI...",
+                minimumInputLength: 2,
+                ajax: {
+                    url: '?search_employees=1',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function(params) {
+                        return {
+                            term: params.term
+                        };
+                    },
+                    processResults: function(data) {
+                        var validData = data.filter(function(item) {
+                            return item && item.id && item.nombre_completo && item.dni;
+                        });
+                        
+                        return {
+                            results: validData.map(function(item) {
+                                return {
+                                    id: item.id,
+                                    text: item.nombre_completo + ' (' + item.dni + ')'
+                                };
+                            })
+                        };
+                    },
+                    cache: true
+                }
+            });
+            
+            // Auto-ocultar mensajes flash después de 2.5 segundos
+            setTimeout(function() {
+                var flashMessage = document.getElementById('flash-message');
+                if (flashMessage) {
+                    flashMessage.style.display = 'none';
+                }
+            }, 2500);
+            
+            // Filtros en tiempo real para reportes
+            $('#search_input').on('input', function() {
+                filterReportTable();
+            });
+            
+            // Filtros de área y cargo para reportes
+            $('#filter_area_report, #filter_cargo_report').on('change', function() {
+                filterReportTable();
+            });
+            
+            // Filtros para administradores
+            $('#search_admin').on('input', function() {
+                filterAdminsTable();
+            });
+            
+            $('#filter_rol_admin, #filter_estado_admin').on('change', function() {
+                filterAdminsTable();
+            });
+            
+            // Filtros para trabajadores
+            $('#search_trabajador').on('input', function() {
+                filterTrabajadoresTable();
+            });
+            
+            $('#filter_area_trabajador, #filter_cargo_trabajador, #filter_estado_trabajador').on('change', function() {
+                filterTrabajadoresTable();
+            });
+            
+            // Actualizar reporte al cambiar fechas - AHORA SIEMPRE FECHA ACTUAL
+            $('#fecha_inicio, #fecha_fin').on('change', function() {
+                var fechaInicio = $('#fecha_inicio').val();
+                var fechaFin = $('#fecha_fin').val();
+                
+                // Si no se selecciona fecha, usar la fecha actual
+                if (!fechaInicio) fechaInicio = '<?= date('Y-m-d') ?>';
+                if (!fechaFin) fechaFin = '<?= date('Y-m-d') ?>';
+                
+                // Actualizar la página con las nuevas fechas
+                var currentUrl = new URL(window.location.href);
+                currentUrl.searchParams.set('fecha_inicio', fechaInicio);
+                currentUrl.searchParams.set('fecha_fin', fechaFin);
+                window.location.href = currentUrl.toString();
+            });
+            
+            // Actualizar vista de áreas
+            $('#tipo_vista').on('change', function() {
+                var tipoVista = $(this).val();
+                window.location.href = '?<?= http_build_query(array_merge($_GET, ['tipo_vista' => 'TIPO_VISTA'])) ?>'
+                    .replace('TIPO_VISTA', tipoVista);
+            });
+            
+            // Control de tiempo de sesión
+            let inactivityTime = function() {
+                let time;
+                const resetTimer = function() {
+                    clearTimeout(time);
+                    time = setTimeout(() => {
+                        // Redirigir al logout después de 15 minutos de inactividad
+                        window.location.href = 'index.php';
+                    }, 900000); // 15 minutos en milisegundos
+                };
+                
+                // Eventos que resetearán el timer
+                window.onload = resetTimer;
+                window.onmousemove = resetTimer;
+                window.onmousedown = resetTimer;
+                window.ontouchstart = resetTimer;
+                window.onclick = resetTimer;
+                window.onkeypress = resetTimer;
+                window.addEventListener('scroll', resetTimer, true);
+            };
+            
+            // Iniciar el control de inactividad
+            inactivityTime();
         });
         
-        // Actualizar cargos cuando se cambie el área
-        $('#area').change(function() {
-            var area = $(this).val();
-            var cargoSelect = $('#puesto');
-            cargoSelect.empty().append('<option value="">Seleccione un cargo</option>');
+        // Función de filtrado para reportes
+        function filterReportTable() {
+            var searchText = $('#search_input').val().toLowerCase();
+            var areaFilter = $('#filter_area_report').val();
+            var cargoFilter = $('#filter_cargo_report').val();
             
-            if (area && window.CARGOS_POR_AREA && window.CARGOS_POR_AREA[area]) {
-                window.CARGOS_POR_AREA[area].forEach(function(cargo) {
-                    cargoSelect.append('<option value="' + cargo + '">' + cargo + '</option>');
+            $('#report-table tbody tr').each(function() {
+                var area = $(this).data('area') || '';
+                var cargo = $(this).data('cargo') || '';
+                var rowText = $(this).text().toLowerCase();
+                
+                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
+                var matchArea = areaFilter === '' || area === areaFilter;
+                var matchCargo = cargoFilter === '' || cargo === cargoFilter;
+                
+                if (matchSearch && matchArea && matchCargo) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+        
+        // Función de filtrado para administradores
+        function filterAdminsTable() {
+            var searchText = $('#search_admin').val().toLowerCase();
+            var rolFilter = $('#filter_rol_admin').val();
+            var estadoFilter = $('#filter_estado_admin').val();
+            
+            $('#admins-table tbody tr').each(function() {
+                var rol = $(this).data('rol') || '';
+                var estado = $(this).data('estado') || '';
+                var rowText = $(this).text().toLowerCase();
+                
+                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
+                var matchRol = rolFilter === '' || rol === rolFilter;
+                var matchEstado = estadoFilter === '' || estado === estadoFilter;
+                
+                if (matchSearch && matchRol && matchEstado) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+        
+        // Función de filtrado para trabajadores
+        function filterTrabajadoresTable() {
+            var searchText = $('#search_trabajador').val().toLowerCase();
+            var areaFilter = $('#filter_area_trabajador').val();
+            var cargoFilter = $('#filter_cargo_trabajador').val();
+            var estadoFilter = $('#filter_estado_trabajador').val();
+            
+            $('#trabajadores-table tbody tr').each(function() {
+                var area = $(this).data('area') || '';
+                var cargo = $(this).data('cargo') || '';
+                var estado = $(this).data('estado') || '';
+                var rowText = $(this).text().toLowerCase();
+                
+                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
+                var matchArea = areaFilter === '' || area === areaFilter;
+                var matchCargo = cargoFilter === '' || cargo === cargoFilter;
+                var matchEstado = estadoFilter === '' || estado === estadoFilter;
+                
+                if (matchSearch && matchArea && matchCargo && matchEstado) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+        
+        // Aplicar filtros de historial
+        function applyHistoryFilters() {
+            var fechaInicio = $('#historial_fecha_inicio').val();
+            var fechaFin = $('#historial_fecha_fin').val();
+            var tabla = $('#historial_tabla').val();
+            var accion = $('#historial_accion').val();
+            var creadoPor = $('#historial_creado_por').val();
+            
+            var params = new URLSearchParams();
+            params.set('section', 'history');
+            if (fechaInicio) params.set('historial_fecha_inicio', fechaInicio);
+            if (fechaFin) params.set('historial_fecha_fin', fechaFin);
+            if (tabla) params.set('historial_tabla', tabla);
+            if (accion) params.set('historial_accion', accion);
+            if (creadoPor) params.set('historial_creado_por', creadoPor);
+            
+            window.location.href = '?' + params.toString();
+        }
+        
+        // Función para exportar a Excel - SOLO si NO es espectador
+        function exportToExcel(exportType) {
+            var currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('export_excel', '1');
+            currentUrl.searchParams.set('export_type', exportType);
+            
+            // Agregar filtros actuales
+            var searchText = $('#search_input').val() || $('#search_admin').val() || $('#search_trabajador').val() || '';
+            var areaFilter = $('#filter_area_report').val() || $('#filter_area_trabajador').val() || '';
+            var cargoFilter = $('#filter_cargo_report').val() || $('#filter_cargo_trabajador').val() || '';
+            var rolFilter = $('#filter_rol_admin').val() || '';
+            var estadoFilter = $('#filter_estado_admin').val() || $('#filter_estado_trabajador').val() || '';
+            
+            if (searchText) currentUrl.searchParams.set('search_term', searchText);
+            if (areaFilter) currentUrl.searchParams.set('filter_area', areaFilter);
+            if (cargoFilter) currentUrl.searchParams.set('filter_cargo', cargoFilter);
+            if (rolFilter) currentUrl.searchParams.set('filter_rol', rolFilter);
+            if (estadoFilter) currentUrl.searchParams.set('filter_estado', estadoFilter);
+            
+            window.location.href = currentUrl.toString();
+        }
+        
+        // Función para actualizar filtro de cargos según el área seleccionada
+        function updateCargoFilter(tipo) {
+            var areaSelect = document.getElementById('filter_area_' + tipo);
+            var cargoSelect = document.getElementById('filter_cargo_' + tipo);
+            var area = areaSelect.value;
+            
+            if (area) {
+                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(area))
+                    .then(response => response.json())
+                    .then(cargos => {
+                        cargoSelect.innerHTML = '<option value="">Todos los cargos</option>';
+                        cargos.forEach(cargo => {
+                            var option = document.createElement('option');
+                            option.value = cargo;
+                            option.textContent = cargo;
+                            cargoSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
+                    });
+            } else {
+                cargoSelect.innerHTML = '<option value="">Todos los cargos</option>';
+                // Cargar todos los cargos disponibles
+                <?php 
+                $allPositions = [];
+                foreach ($CARGOS_POR_AREA as $cargos) {
+                    $allPositions = array_merge($allPositions, $cargos);
+                }
+                $allPositions = array_unique($allPositions);
+                ?>
+                var allPositions = <?= json_encode($allPositions) ?>;
+                allPositions.forEach(cargo => {
+                    var option = document.createElement('option');
+                    option.value = cargo;
+                    option.textContent = cargo;
+                    cargoSelect.appendChild(option);
                 });
             }
-        });
+        }
         
-        // Mostrar/ocultar horarios según tipo de personal
-        $('#tipo_personal').change(function() {
-            if ($(this).val() === 'Administrativo') {
-                $('#horarios-container').show();
-            } else {
-                $('#horarios-container').hide();
-            }
-        });
+        // Funciones para los modales
+        function openAddEmpleadoModal() {
+            document.getElementById('addEmpleadoModal').style.display = 'block';
+        }
         
-        // Auto-ocultar mensajes flash después de 1.5 segundos
-        setTimeout(function() {
-            var flashMessage = document.getElementById('flash-message');
-            if (flashMessage) {
-                flashMessage.style.display = 'none';
-            }
-        }, 1500);
-    });
-    
-    // Pasar las variables PHP a JavaScript
-    var CARGOS_POR_AREA = <?= json_encode($CARGOS_POR_AREA) ?>;
-    
-    // Actualizar automáticamente al cambiar filtros
-    document.querySelectorAll('#filter-form select, #filter-form input').forEach(element => {
-        element.addEventListener('change', function() {
-            document.getElementById('filter-form').submit();
-        });
-    });
-    
-    // Para el campo de búsqueda, esperar un poco después de escribir
-    let searchTimeout;
-    document.getElementById('busqueda').addEventListener('input', function() {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-            document.getElementById('filter-form').submit();
-        }, 500);
-    });
-    
-    // Filtrar empleados en la tabla
-    function filterEmployees() {
-        const input = document.getElementById('search-employee');
-        const filter = input.value.toLowerCase();
-        const rows = document.querySelectorAll('#employees-table .employee-row');
+        function openEditEmpleadoModal(id) {
+            // Hacer una solicitud AJAX para obtener los datos del empleado
+            fetch('?get_empleado=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('edit_empleado_id').value = data.id;
+                        document.getElementById('edit_dni').value = data.dni || '';
+                        document.getElementById('edit_nombres').value = data.nombres || '';
+                        document.getElementById('edit_apellidos').value = data.apellidos || '';
+                        document.getElementById('edit_area').value = data.area || '';
+                        document.getElementById('edit_inicio_contrato').value = data.inicio_contrato || '';
+                        document.getElementById('edit_fin_contrato').value = data.fin_contrato || '';
+                        document.getElementById('edit_tipo_personal').value = data.tipo_personal || '';
+                        
+                        // Actualizar cargos según el área
+                        updateEditEmpleadoCargos(data.area, data.puesto);
+                        
+                        // Actualizar campos de horario
+                        toggleEditHorarioFields(data.tipo_personal);
+                        
+                        if (data.entrada_manana) {
+                            document.getElementById('edit_entrada_manana').value = data.entrada_manana;
+                        }
+                        if (data.salida_manana) {
+                            document.getElementById('edit_salida_manana').value = data.salida_manana;
+                        }
+                        if (data.entrada_tarde) {
+                            document.getElementById('edit_entrada_tarde').value = data.entrada_tarde;
+                        }
+                        if (data.salida_tarde) {
+                            document.getElementById('edit_salida_tarde').value = data.salida_tarde;
+                        }
+                        
+                        // Actualizar foto
+                        if (data.foto) {
+                            document.getElementById('editPhotoPreview').src = '<?= FOTO_DIR ?>' + data.foto;
+                        } else {
+                            document.getElementById('editPhotoPreview').src = '';
+                            document.getElementById('editPhotoPreview').style.display = 'none';
+                        }
+                        
+                        document.getElementById('editEmpleadoModal').style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al cargar los datos del empleado');
+                });
+        }
         
-        rows.forEach(row => {
-            const searchText = row.getAttribute('data-search');
-            if (searchText.includes(filter)) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
-    }
-    
-    // Filtrar administradores en la tabla
-    function filterAdmins() {
-        const input = document.getElementById('search-admin');
-        const filter = input.value.toLowerCase();
-        const rows = document.querySelectorAll('#admins-table .admin-row');
+        function openManualAttendanceModal() {
+            document.getElementById('manualAttendanceModal').style.display = 'block';
+        }
         
-        rows.forEach(row => {
-            const searchText = row.getAttribute('data-search');
-            if (searchText.includes(filter)) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
-    }
-    
-    // Funciones para los modales
-    function openManualAttendanceModal() {
-        document.getElementById('manualAttendanceModal').style.display = 'block';
-    }
-    
-    function openAddEmployeeModal() {
-        document.getElementById('employeeModalTitle').textContent = 'Agregar Nuevo Empleado';
-        document.getElementById('employeeForm').reset();
-        document.getElementById('employee_id').value = '';
-        document.getElementById('employeeSubmitBtn').name = 'agregar_empleado';
-        document.getElementById('employeePhotoPreview').style.display = 'none';
-        document.getElementById('employeePhotoPlaceholder').style.display = 'block';
+        function openManualPermissionModal() {
+            document.getElementById('manualPermissionModal').style.display = 'block';
+        }
         
-        // Resetear el select de cargos
-        $('#puesto').empty().append('<option value="">Seleccione un cargo</option>');
+        function openEditPermissionModal(id) {
+            // Hacer una solicitud AJAX para obtener los datos del permiso
+            fetch('?get_permiso=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('edit_permiso_id').value = data.id;
+                        document.getElementById('edit_tipo_permiso').value = data.tipo_permiso || '';
+                        document.getElementById('edit_motivo').value = data.motivo || '';
+                        document.getElementById('edit_fecha_permiso').value = data.fecha_permiso || '';
+                        document.getElementById('edit_hora_salida').value = data.hora_salida || '';
+                        document.getElementById('edit_hora_retorno').value = data.hora_retorno || '';
+                        
+                        document.getElementById('editPermissionModal').style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al cargar los datos del permiso');
+                });
+        }
         
-        document.getElementById('employeeModal').style.display = 'block';
-    }
-    
-    function openEditEmployeeModal(id) {
-        // Hacer una solicitud AJAX para obtener los datos del empleado
-        fetch('?get_employee=' + id)
-            .then(response => response.json())
-            .then(data => {
-                if (data) {
-                    document.getElementById('employeeModalTitle').textContent = 'Editar Empleado';
-                    document.getElementById('employee_id').value = data.id;
-                    document.getElementById('dni').value = data.dni || '';
-                    document.getElementById('nombres').value = data.nombres || '';
-                    document.getElementById('apellidos').value = data.apellidos || '';
-                    document.getElementById('area').value = data.area || '';
-                    
-                    // Actualizar cargos según el área seleccionada
-                    var area = data.area || '';
-                    var cargoSelect = $('#puesto');
-                    cargoSelect.empty().append('<option value="">Seleccione un cargo</option>');
-                    
-                    if (area && window.CARGOS_POR_AREA && window.CARGOS_POR_AREA[area]) {
-                        window.CARGOS_POR_AREA[area].forEach(function(cargo) {
-                            cargoSelect.append('<option value="' + cargo + '" ' + (cargo === data.puesto ? 'selected' : '') + '>' + cargo + '</option>');
+        function openAddAdminModal() {
+            document.getElementById('addAdminModal').style.display = 'block';
+        }
+        
+        function openEditAdminModal(id) {
+            // Hacer una solicitud AJAX para obtener los datos del administrador
+            fetch('?get_admin=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('edit_admin_id').value = data.id;
+                        document.getElementById('edit_nombres').value = data.nombres || '';
+                        document.getElementById('edit_apellidos').value = data.apellidos || '';
+                        document.getElementById('edit_area').value = data.area || '';
+                        document.getElementById('edit_usuario').value = data.usuario || '';
+                        document.getElementById('edit_rol').value = data.rol || '';
+                        
+                        // Actualizar cargos según el área
+                        updateEditAdminCargos(data.area, data.cargo);
+                        
+                        document.getElementById('editAdminModal').style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al cargar los datos del administrador');
+                });
+        }
+        
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+        
+        // Función para actualizar cargos de empleado según el área seleccionada (agregar)
+        function updateEmpleadoCargos() {
+            var area = document.getElementById('area').value;
+            var cargoSelect = document.getElementById('cargo');
+            
+            if (area) {
+                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(area))
+                    .then(response => response.json())
+                    .then(cargos => {
+                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
+                        cargos.forEach(cargo => {
+                            var option = document.createElement('option');
+                            option.value = cargo;
+                            option.textContent = cargo;
+                            cargoSelect.appendChild(option);
                         });
-                    } else if (data.puesto) {
-                        cargoSelect.append('<option value="' + data.puesto + '" selected>' + data.puesto + '</option>');
-                    }
-                    
-                    document.getElementById('inicio_contrato').value = data.inicio_contrato || '';
-                    document.getElementById('fin_contrato').value = data.fin_contrato || '';
-                    document.getElementById('tipo_personal').value = data.tipo_personal || 'Docente';
-                    
-                    // Mostrar/ocultar horarios según tipo de personal
-                    if (data.tipo_personal === 'Administrativo') {
-                        document.getElementById('horarios-container').style.display = 'grid';
-                        document.getElementById('entrada_manana').value = data.entrada_manana || '08:00';
-                        document.getElementById('salida_manana').value = data.salida_manana || '13:00';
-                        document.getElementById('entrada_tarde').value = data.entrada_tarde || '14:00';
-                        document.getElementById('salida_tarde').value = data.salida_tarde || '18:00';
-                    } else {
-                        document.getElementById('horarios-container').style.display = 'none';
-                    }
-                    
-                    // Mostrar foto si existe
-                    if (data.foto && data.foto !== 'null') {
-                        document.getElementById('employeePhotoPreview').src = data.foto;
-                        document.getElementById('employeePhotoPreview').style.display = 'block';
-                        document.getElementById('employeePhotoPlaceholder').style.display = 'none';
-                    } else {
-                        document.getElementById('employeePhotoPreview').style.display = 'none';
-                        document.getElementById('employeePhotoPlaceholder').style.display = 'block';
-                    }
-                    
-                    document.getElementById('employeeSubmitBtn').name = 'editar_empleado';
-                    document.getElementById('employeeModal').style.display = 'block';
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error al cargar los datos del empleado');
-            });
-    }
-    
-    function previewEmployeePhoto(input) {
-        if (input.files && input.files[0]) {
-            var reader = new FileReader();
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
+                    });
+            } else {
+                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
+            }
+        }
+        
+        // Función para actualizar cargos de empleado según el área seleccionada (editar)
+        function updateEditEmpleadoCargos(area = null, selectedCargo = null) {
+            var areaElem = document.getElementById('edit_area');
+            var areaValue = area || areaElem.value;
+            var cargoSelect = document.getElementById('edit_cargo');
             
-            reader.onload = function(e) {
-                document.getElementById('employeePhotoPreview').src = e.target.result;
-                document.getElementById('employeePhotoPreview').style.display = 'block';
-                document.getElementById('employeePhotoPlaceholder').style.display = 'none';
+            if (areaValue) {
+                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(areaValue))
+                    .then(response => response.json())
+                    .then(cargos => {
+                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
+                        cargos.forEach(cargo => {
+                            var option = document.createElement('option');
+                            option.value = cargo;
+                            option.textContent = cargo;
+                            if (selectedCargo && cargo === selectedCargo) {
+                                option.selected = true;
+                            }
+                            cargoSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
+                    });
+            } else {
+                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
+            }
+        }
+        
+        // Función para actualizar cargos de administrador según el área seleccionada (agregar)
+        function updateAdminCargos() {
+            var area = document.getElementById('area').value;
+            var cargoSelect = document.getElementById('cargo');
+            
+            if (area) {
+                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(area))
+                    .then(response => response.json())
+                    .then(cargos => {
+                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
+                        cargos.forEach(cargo => {
+                            var option = document.createElement('option');
+                            option.value = cargo;
+                            option.textContent = cargo;
+                            cargoSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
+                    });
+            } else {
+                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
+            }
+        }
+        
+        // Función para actualizar cargos de administrador según el área seleccionada (editar)
+        function updateEditAdminCargos(area = null, selectedCargo = null) {
+            var areaElem = document.getElementById('edit_area');
+            var areaValue = area || areaElem.value;
+            var cargoSelect = document.getElementById('edit_cargo');
+            
+            if (areaValue) {
+                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(areaValue))
+                    .then(response => response.json())
+                    .then(cargos => {
+                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
+                        cargos.forEach(cargo => {
+                            var option = document.createElement('option');
+                            option.value = cargo;
+                            option.textContent = cargo;
+                            if (selectedCargo && cargo === selectedCargo) {
+                                option.selected = true;
+                            }
+                            cargoSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
+                    });
+            } else {
+                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
+            }
+        }
+        
+        // Mostrar/ocultar campos de horario según tipo de personal
+        function toggleHorarioFields() {
+            var tipoPersonal = document.getElementById('tipo_personal').value;
+            var horarioFields = document.getElementById('horarioFields');
+            
+            if (tipoPersonal === 'Administrativo') {
+                horarioFields.classList.remove('hidden');
+            } else {
+                horarioFields.classList.add('hidden');
+            }
+        }
+        
+        function toggleEditHorarioFields(tipoPersonal = null) {
+            var tipoElem = document.getElementById('edit_tipo_personal');
+            var tipoValue = tipoPersonal || tipoElem.value;
+            var horarioFields = document.getElementById('editHorarioFields');
+            
+            if (tipoValue === 'Administrativo') {
+                horarioFields.classList.remove('hidden');
+            } else {
+                horarioFields.classList.add('hidden');
+            }
+        }
+        
+        // Vista previa de foto
+        function previewPhoto(input) {
+            var preview = document.getElementById('photoPreview');
+            if (input.files && input.files[0]) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                }
+                reader.readAsDataURL(input.files[0]);
+            } else {
+                preview.src = '';
+                preview.style.display = 'none';
+            }
+        }
+        
+        function previewEditPhoto(input) {
+            var preview = document.getElementById('editPhotoPreview');
+            if (input.files && input.files[0]) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        // Modal para imagen ampliada - MEJORADO
+        function openImageModal(src) {
+            document.getElementById('modalImage').src = src;
+            document.getElementById('imageModal').style.display = 'flex';
+        }
+        
+        function closeImageModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+        
+        // Validación de formulario de administrador (agregar)
+        function validateAdminForm(form) {
+            var password = form.password.value;
+            
+            if (password.length < 4) {
+                alert('La contraseña debe tener al menos 4 caracteres');
+                form.password.focus();
+                return false;
             }
             
-            reader.readAsDataURL(input.files[0]);
+            return true;
         }
-    }
-    
-    function openAddAdminModal() {
-        document.getElementById('adminModalTitle').textContent = 'Agregar Administrador';
-        document.getElementById('adminForm').reset();
-        document.getElementById('admin_id').value = '';
-        document.getElementById('contrasenaLabel').textContent = 'Contraseña';
-        document.getElementById('contrasena').required = true;
-        document.getElementById('adminSubmitBtn').name = 'agregar_admin';
-        document.getElementById('adminModal').style.display = 'block';
-    }
-    
-    function openEditAdminModal(id) {
-        // Hacer una solicitud AJAX para obtener los datos del administrador
-        fetch('?get_admin=' + id)
-            .then(response => response.json())
-            .then(data => {
-                if (data) {
-                    document.getElementById('adminModalTitle').textContent = 'Editar Administrador';
-                    document.getElementById('admin_id').value = data.id;
-                    document.getElementById('usuario').value = data.usuario || '';
-                    document.getElementById('rol').value = data.rol || 'admin';
-                    document.getElementById('contrasenaLabel').textContent = 'Nueva Contraseña (dejar en blanco para no cambiar)';
-                    document.getElementById('contrasena').required = false;
-                    document.getElementById('adminSubmitBtn').name = 'editar_admin';
-                    document.getElementById('adminModal').style.display = 'block';
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error al cargar los datos del administrador');
-            });
-    }
-    
-    function confirmDeleteEmployee(id, name) {
-        document.getElementById('deleteEmployeeName').textContent = name;
-        document.getElementById('confirmDeleteEmployeeBtn').href = '?section=empleados&eliminar_empleado=' + id;
-        document.getElementById('confirmDeleteEmployeeModal').style.display = 'block';
-    }
-    
-    function confirmDeleteAdmin(id, name) {
-        document.getElementById('deleteAdminName').textContent = name;
-        document.getElementById('confirmDeleteAdminBtn').href = '?section=administradores&eliminar_admin=' + id;
-        document.getElementById('confirmDeleteAdminModal').style.display = 'block';
-    }
-    
-    function closeModal(modalId) {
-        document.getElementById(modalId).style.display = 'none';
-    }
-    
-    // Cerrar modal al hacer clic fuera de él
-    window.onclick = function(event) {
-        if (event.target.className === 'modal') {
-            document.querySelectorAll('.modal').forEach(modal => {
-                modal.style.display = 'none';
-            });
+        
+        // Validación de formulario de administrador (editar)
+        function validateEditAdminForm(form) {
+            var password = form.password.value;
+            
+            // Solo validar si se está cambiando la contraseña
+            if (password !== '' && password.length < 4) {
+                alert('La contraseña debe tener al menos 4 caracteres');
+                form.password.focus();
+                return false;
+            }
+            
+            return true;
         }
-    }
-</script>
+        
+        // Cerrar modal al hacer clic fuera de él
+        window.onclick = function(event) {
+            if (event.target.className === 'modal') {
+                document.querySelectorAll('.modal').forEach(modal => {
+                    modal.style.display = 'none';
+                });
+            }
+            if (event.target.className === 'image-modal') {
+                closeImageModal();
+            }
+        }
+    </script>
 </body>
 </html>

@@ -123,7 +123,7 @@ function getTemporalStyle() {
     // Halloween: 25/09 al 10/11
     if (($currentMonth == 9 && $currentDay >= 25) || 
         ($currentMonth == 10) || 
-        ($currentMonth == 11 && $currentDay <= 10)) {
+        ($currentMonth == 11 && $currentDay <= 2)) {
         return 'halloween';
     }
     

@@ -162,489 +162,6 @@ function registrarHistorial($tabla, $usuarioAfectado, $accion, $campo, $valorAnt
     $stmt->execute([$tabla, $usuarioAfectado, $accion, $campo, $valorAnterior, $valorNuevo, $motivo, $_SESSION['admin_id']]);
 }
 
-// Procesar agregar empleado
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
-    $dni = $_POST['dni'];
-    $nombres = $_POST['nombres'];
-    $apellidos = $_POST['apellidos'];
-    $area = $_POST['area'];
-    $cargo = $_POST['cargo'];
-    $inicio_contrato = $_POST['inicio_contrato'];
-    $fin_contrato = $_POST['fin_contrato'];
-    $tipo_personal = $_POST['tipo_personal'];
-    
-    // Verificar si el DNI ya existe
-    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ?");
-    $stmt->execute([$dni]);
-    if ($stmt->fetch()) {
-        $_SESSION['error_message'] = "Error: Ya existe un empleado con el DNI $dni";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
-        exit;
-    }
-    
-    // Campos de horario (solo para administrativos)
-    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
-    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
-    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
-    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
-    
-    // Procesar foto
-    $foto = null;
-    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-        $foto = uniqid() . '.' . $extension;
-        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
-    }
-    
-    try {
-        $stmt = $pdo->prepare("INSERT INTO empleados (dni, nombres, apellidos, area, puesto, inicio_contrato, fin_contrato, tipo_personal, entrada_manana, salida_manana, entrada_tarde, salida_tarde, foto, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', ?)");
-        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $_SESSION['admin_id']]);
-        
-        // Registrar en historial
-        registrarHistorial('empleados', $dni, 'INSERT', 'nuevo_empleado', null, "$apellidos $nombres", "Creación de nuevo empleado", $pdo);
-        
-        $_SESSION['success_message'] = "Empleado agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al agregar empleado: " . $e->getMessage();
-    }
-}
-
-// Procesar agregar administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_administrador']) && $isSuperAdmin) {
-    $empleado_id = $_POST['empleado_id'];
-    $usuario = $_POST['usuario'];
-    $password = $_POST['password'];
-    $rol = $_POST['rol'];
-    
-    // Verificar si el usuario ya existe
-    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ?");
-    $stmt->execute([$usuario]);
-    if ($stmt->fetch()) {
-        $_SESSION['error_message'] = "Error: Ya existe un usuario con el nombre de usuario $usuario";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    }
-    
-    // Verificar si el empleado ya tiene una cuenta de administrador
-    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE id = ?");
-    $stmt->execute([$empleado_id]);
-    if ($stmt->fetch()) {
-        $_SESSION['error_message'] = "Error: Este empleado ya tiene una cuenta de administrador";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    }
-    
-    // Verificar longitud de contraseña
-    if (strlen($password) < 4) {
-        $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    }
-    
-    // Obtener datos del empleado
-    $stmt = $pdo->prepare("SELECT nombres, apellidos FROM empleados WHERE id = ?");
-    $stmt->execute([$empleado_id]);
-    $empleado = $stmt->fetch();
-    
-    if (!$empleado) {
-        $_SESSION['error_message'] = "Error: Empleado no encontrado";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    }
-    
-    try {
-        $password_hash = password_hash($password, PASSWORD_DEFAULT);
-        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (id, nombres, apellidos, usuario, password, rol, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, 'activo', ?)");
-        $stmt->execute([$empleado_id, $empleado['nombres'], $empleado['apellidos'], $usuario, $password_hash, $rol, $_SESSION['admin_id']]);
-        
-        // Registrar en historial
-        registrarHistorial('usuarios_admin', $usuario, 'INSERT', 'nuevo_admin', null, "$usuario ($rol)", "Creación de nuevo administrador", $pdo);
-        
-        $_SESSION['success_message'] = "Administrador agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al agregar administrador: " . $e->getMessage();
-    }
-}
-
-// Procesar edición de empleado
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
-    $empleado_id = $_POST['empleado_id'];
-    $dni = $_POST['dni'];
-    $nombres = $_POST['nombres'];
-    $apellidos = $_POST['apellidos'];
-    $area = $_POST['area'];
-    $cargo = $_POST['cargo'];
-    $inicio_contrato = $_POST['inicio_contrato'];
-    $fin_contrato = $_POST['fin_contrato'];
-    $tipo_personal = $_POST['tipo_personal'];
-    
-    // Verificar si el DNI ya existe (excluyendo el empleado actual)
-    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ? AND id != ?");
-    $stmt->execute([$dni, $empleado_id]);
-    if ($stmt->fetch()) {
-        $_SESSION['error_message'] = "Error: Ya existe otro empleado con el DNI $dni";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
-        exit;
-    }
-    
-    // Campos de horario (solo para administrativos)
-    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
-    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
-    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
-    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
-    
-    // Obtener datos anteriores para el historial
-    $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
-    $stmt->execute([$empleado_id]);
-    $empleado_anterior = $stmt->fetch();
-    
-    // Procesar foto
-    $foto = $empleado_anterior['foto'];
-    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        // Eliminar foto anterior si existe
-        if ($foto && file_exists(FOTO_DIR . $foto)) {
-            unlink(FOTO_DIR . $foto);
-        }
-        
-        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-        $foto = uniqid() . '.' . $extension;
-        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
-    }
-    
-    try {
-        $sql = "UPDATE empleados SET dni = ?, nombres = ?, apellidos = ?, area = ?, puesto = ?, inicio_contrato = ?, fin_contrato = ?, tipo_personal = ?, entrada_manana = ?, salida_manana = ?, entrada_tarde = ?, salida_tarde = ?, foto = ? WHERE id = ?";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $empleado_id]);
-        
-        // Registrar en historial
-        $cambios = [];
-        if ($empleado_anterior['dni'] != $dni) {
-            $cambios[] = "dni: {$empleado_anterior['dni']} -> $dni";
-        }
-        if ($empleado_anterior['nombres'] != $nombres) {
-            $cambios[] = "nombres: {$empleado_anterior['nombres']} -> $nombres";
-        }
-        if ($empleado_anterior['apellidos'] != $apellidos) {
-            $cambios[] = "apellidos: {$empleado_anterior['apellidos']} -> $apellidos";
-        }
-        if ($empleado_anterior['area'] != $area) {
-            $cambios[] = "area: {$empleado_anterior['area']} -> $area";
-        }
-        if ($empleado_anterior['puesto'] != $cargo) {
-            $cambios[] = "puesto: {$empleado_anterior['puesto']} -> $cargo";
-        }
-        if ($empleado_anterior['inicio_contrato'] != $inicio_contrato) {
-            $cambios[] = "inicio_contrato: {$empleado_anterior['inicio_contrato']} -> $inicio_contrato";
-        }
-        if ($empleado_anterior['fin_contrato'] != $fin_contrato) {
-            $cambios[] = "fin_contrato: {$empleado_anterior['fin_contrato']} -> $fin_contrato";
-        }
-        if ($empleado_anterior['tipo_personal'] != $tipo_personal) {
-            $cambios[] = "tipo_personal: {$empleado_anterior['tipo_personal']} -> $tipo_personal";
-        }
-        if ($foto != $empleado_anterior['foto']) {
-            $cambios[] = "foto: [actualizada]";
-        }
-        
-        if (!empty($cambios)) {
-            registrarHistorial('empleados', $dni, 'UPDATE', 'datos_empleado', $empleado_anterior['dni'], $dni, "Cambios: " . implode(', ', $cambios), $pdo);
-        }
-        
-        $_SESSION['success_message'] = "Empleado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar empleado: " . $e->getMessage();
-    }
-}
-
-// Procesar edición de administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_administrador']) && $isSuperAdmin) {
-    $admin_id = $_POST['admin_id'];
-    $usuario = $_POST['usuario'];
-    $rol = $_POST['rol'];
-    $password = $_POST['password'];
-    
-    // Verificar si el usuario ya existe (excluyendo el actual)
-    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ? AND id != ?");
-    $stmt->execute([$usuario, $admin_id]);
-    if ($stmt->fetch()) {
-        $_SESSION['error_message'] = "Error: Ya existe otro usuario con el nombre de usuario $usuario";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    }
-    
-    // Obtener datos anteriores para el historial
-    $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
-    $stmt->execute([$admin_id]);
-    $admin_anterior = $stmt->fetch();
-    
-    try {
-        if (!empty($password)) {
-            // Verificar longitud de contraseña
-            if (strlen($password) < 4) {
-                $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
-                header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-                exit;
-            }
-            
-            $password_hash = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, password = ?, rol = ? WHERE id = ?");
-            $stmt->execute([$usuario, $password_hash, $rol, $admin_id]);
-        } else {
-            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, rol = ? WHERE id = ?");
-            $stmt->execute([$usuario, $rol, $admin_id]);
-        }
-        
-        // Registrar en historial
-        $cambios = [];
-        if ($admin_anterior['usuario'] != $usuario) {
-            $cambios[] = "usuario: {$admin_anterior['usuario']} -> $usuario";
-        }
-        if ($admin_anterior['rol'] != $rol) {
-            $cambios[] = "rol: {$admin_anterior['rol']} -> $rol";
-        }
-        if (!empty($password)) {
-            $cambios[] = "password: [actualizada]";
-        }
-        
-        if (!empty($cambios)) {
-            registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'datos_admin', $admin_anterior['usuario'], $usuario, "Cambios: " . implode(', ', $cambios), $pdo);
-        }
-        
-        $_SESSION['success_message'] = "Administrador actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar administrador: " . $e->getMessage();
-    }
-}
-
-// Procesar cambio de estado de empleado
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_empleado']) && ($isSuperAdmin || $isSupervisor)) {
-    $empleado_id = $_POST['empleado_id'];
-    $nuevo_estado = $_POST['nuevo_estado'];
-    
-    try {
-        // Obtener datos anteriores
-        $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
-        $stmt->execute([$empleado_id]);
-        $empleado_anterior = $stmt->fetch();
-        
-        $stmt = $pdo->prepare("UPDATE empleados SET estado = ? WHERE id = ?");
-        $stmt->execute([$nuevo_estado, $empleado_id]);
-        
-        // Registrar en historial
-        registrarHistorial('empleados', $empleado_anterior['dni'], 'UPDATE', 'estado', $empleado_anterior['estado'], $nuevo_estado, "Cambio de estado de empleado", $pdo);
-        
-        $_SESSION['success_message'] = "Estado del empleado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
-    }
-}
-
-// Procesar cambio de estado de administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_admin']) && $isSuperAdmin) {
-    $admin_id = $_POST['admin_id'];
-    $nuevo_estado = $_POST['nuevo_estado'];
-    
-    try {
-        // Obtener datos anteriores
-        $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
-        $stmt->execute([$admin_id]);
-        $admin_anterior = $stmt->fetch();
-        
-        $stmt = $pdo->prepare("UPDATE usuarios_admin SET estado = ? WHERE id = ?");
-        $stmt->execute([$nuevo_estado, $admin_id]);
-        
-        // Registrar en historial
-        registrarHistorial('usuarios_admin', $admin_anterior['usuario'], 'UPDATE', 'estado', $admin_anterior['estado'], $nuevo_estado, "Cambio de estado de administrador", $pdo);
-        
-        $_SESSION['success_message'] = "Estado del administrador actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
-    }
-}
-
-// Procesar ingreso manual de asistencia (solo para superadmin y supervisor)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_asistencia']) && ($isSuperAdmin || $isSupervisor)) {
-    $empleado_id = $_POST['empleado_id'];
-    $fecha = $_POST['fecha'];
-    $hora = $_POST['hora'];
-    
-    try {
-        $stmt = $pdo->prepare("INSERT INTO registros_asistencia (empleado_id, fecha, hora, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, 'MANUAL')");
-        $stmt->execute([$empleado_id, $fecha, $hora, $_SESSION['admin_id']]);
-        
-        // Registrar en historial
-        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
-        $stmtEmpleado->execute([$empleado_id]);
-        $empleado = $stmtEmpleado->fetch();
-        registrarHistorial('registros_asistencia', $empleado['nombre'], 'INSERT', 'asistencia_manual', null, "$fecha $hora", "Registro manual de asistencia", $pdo);
-        
-        $_SESSION['success_message'] = "Asistencia registrada correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=daily");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al registrar asistencia: " . $e->getMessage();
-    }
-}
-
-// Procesar registro manual de permiso
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_permiso_manual']) && ($isSuperAdmin || $isSupervisor)) {
-    $empleado_id = $_POST['empleado_id'];
-    $tipo_permiso = $_POST['tipo_permiso'];
-    $motivo = $_POST['motivo'];
-    $fecha_permiso = $_POST['fecha_permiso'];
-    $hora_salida = $_POST['hora_salida'];
-    $hora_retorno = $_POST['hora_retorno'];
-    
-    try {
-        $stmt = $pdo->prepare("INSERT INTO permisos (empleado_id, tipo_permiso, motivo, fecha_permiso, hora_salida, hora_retorno, hora_registro, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, 'MANUAL')");
-        $stmt->execute([$empleado_id, $tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $_SESSION['admin_id']]);
-        
-        // Registrar en historial
-        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
-        $stmtEmpleado->execute([$empleado_id]);
-        $empleado = $stmtEmpleado->fetch();
-        registrarHistorial('permisos', $empleado['nombre'], 'INSERT', 'permiso_manual', null, "$tipo_permiso - $fecha_permiso", $motivo, $pdo);
-        
-        $_SESSION['success_message'] = "Permiso registrado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al registrar permiso: " . $e->getMessage();
-    }
-}
-
-// Procesar actualización de permiso
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_permiso']) && ($isSuperAdmin || $isSupervisor)) {
-    $permiso_id = $_POST['permiso_id'];
-    $tipo_permiso = $_POST['tipo_permiso'];
-    $motivo = $_POST['motivo'];
-    $fecha_permiso = $_POST['fecha_permiso'];
-    $hora_salida = $_POST['hora_salida'];
-    $hora_retorno = $_POST['hora_retorno'];
-    
-    try {
-        // Obtener datos anteriores para el historial
-        $stmt = $pdo->prepare("SELECT * FROM permisos WHERE id = ?");
-        $stmt->execute([$permiso_id]);
-        $permiso_anterior = $stmt->fetch();
-        
-        $stmt = $pdo->prepare("UPDATE permisos SET tipo_permiso = ?, motivo = ?, fecha_permiso = ?, hora_salida = ?, hora_retorno = ? WHERE id = ?");
-        $stmt->execute([$tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $permiso_id]);
-        
-        // Registrar en historial
-        $cambios = [];
-        if ($permiso_anterior['tipo_permiso'] != $tipo_permiso) {
-            $cambios[] = "tipo_permiso: {$permiso_anterior['tipo_permiso']} -> $tipo_permiso";
-        }
-        if ($permiso_anterior['fecha_permiso'] != $fecha_permiso) {
-            $cambios[] = "fecha_permiso: {$permiso_anterior['fecha_permiso']} -> $fecha_permiso";
-        }
-        if ($permiso_anterior['hora_salida'] != $hora_salida) {
-            $cambios[] = "hora_salida: {$permiso_anterior['hora_salida']} -> $hora_salida";
-        }
-        if ($permiso_anterior['hora_retorno'] != $hora_retorno) {
-            $cambios[] = "hora_retorno: {$permiso_anterior['hora_retorno']} -> $hora_retorno";
-        }
-        
-        if (!empty($cambios)) {
-            registrarHistorial('permisos', $permiso_anterior['empleado_id'], 'UPDATE', 'datos_permiso', $permiso_anterior['tipo_permiso'], $tipo_permiso, "Cambios: " . implode(', ', $cambios), $pdo);
-        }
-        
-        $_SESSION['success_message'] = "Permiso actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar permiso: " . $e->getMessage();
-    }
-}
-
-// Procesar actualización de configuración
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configuracion']) && $isSuperAdmin) {
-    $minutos_tolerancia = $_POST['minutos_tolerancia'];
-    
-    try {
-        $valor_anterior = getConfig('minutos_tolerancia', $pdo);
-        updateConfig('minutos_tolerancia', $minutos_tolerancia, $pdo);
-        
-        // Registrar en historial
-        registrarHistorial('configuracion_sistema', 'Sistema', 'UPDATE', 'minutos_tolerancia', $valor_anterior, $minutos_tolerancia, "Actualización de minutos de tolerancia", $pdo);
-        
-        $_SESSION['success_message'] = "Configuración actualizada correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=config");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar configuración: " . $e->getMessage();
-    }
-}
-
-// NUEVA FUNCIÓN: Aplicar filtros en el servidor para TODOS los datos
-function aplicarFiltrosServidor($data, $filtros) {
-    if (empty($filtros) || empty($data)) {
-        return $data;
-    }
-    
-    return array_filter($data, function($row) use ($filtros) {
-        $pasaFiltro = true;
-        
-        foreach ($filtros as $campo => $valor) {
-            if (!empty($valor)) {
-                $valorFila = '';
-                
-                // Obtener el valor de la fila según el campo
-                switch ($campo) {
-                    case 'area':
-                        $valorFila = $row['area'] ?? '';
-                        break;
-                    case 'cargo':
-                        $valorFila = $row['puesto'] ?? '';
-                        break;
-                    case 'estado':
-                        $valorFila = $row['estado'] ?? '';
-                        break;
-                    case 'rol':
-                        $valorFila = $row['rol'] ?? '';
-                        break;
-                    case 'turno':
-                        $valorFila = $row['turno'] ?? '';
-                        break;
-                    case 'busqueda':
-                        // Buscar en todos los campos de texto
-                        $valorFila = strtolower(implode(' ', array_filter($row, function($v) {
-                            return is_string($v) && !empty($v);
-                        })));
-                        break;
-                }
-                
-                if ($campo === 'busqueda') {
-                    if (strpos($valorFila, strtolower($valor)) === false) {
-                        $pasaFiltro = false;
-                        break;
-                    }
-                } else {
-                    if ($valorFila !== $valor) {
-                        $pasaFiltro = false;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        return $pasaFiltro;
-    });
-}
-
 // Clase para generar reportes
 class ReportGenerator {
     private $pdo;
@@ -1376,15 +893,845 @@ class ReportGenerator {
     }
 }
 
+// Instanciar el generador de reportes ANTES de cualquier uso
+$reportGenerator = new ReportGenerator($pdo);
+
+// Procesar agregar empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $dni = $_POST['dni'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $inicio_contrato = $_POST['inicio_contrato'];
+    $fin_contrato = $_POST['fin_contrato'];
+    $tipo_personal = $_POST['tipo_personal'];
+    
+    // Verificar si el DNI ya existe
+    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ?");
+    $stmt->execute([$dni]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe un empleado con el DNI $dni";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    }
+    
+    // Campos de horario (solo para administrativos)
+    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
+    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
+    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
+    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
+    
+    // Procesar foto
+    $foto = null;
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
+        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+        $foto = uniqid() . '.' . $extension;
+        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
+    }
+    
+    try {
+        $stmt = $pdo->prepare("INSERT INTO empleados (dni, nombres, apellidos, area, puesto, inicio_contrato, fin_contrato, tipo_personal, entrada_manana, salida_manana, entrada_tarde, salida_tarde, foto, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo', ?)");
+        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        registrarHistorial('empleados', $dni, 'INSERT', 'nuevo_empleado', null, "$apellidos $nombres", "Creación de nuevo empleado", $pdo);
+        
+        $_SESSION['success_message'] = "Empleado agregado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al agregar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar agregar administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_administrador']) && $isSuperAdmin) {
+    $empleado_id = $_POST['empleado_id'];
+    $usuario = $_POST['usuario'];
+    $password = $_POST['password'];
+    $rol = $_POST['rol'];
+    
+    // Verificar si el usuario ya existe
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ?");
+    $stmt->execute([$usuario]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe un usuario con el nombre de usuario $usuario";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Verificar si el empleado ya tiene una cuenta de administrador
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Este empleado ya tiene una cuenta de administrador";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Verificar longitud de contraseña
+    if (strlen($password) < 4) {
+        $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Obtener datos del empleado
+    $stmt = $pdo->prepare("SELECT nombres, apellidos FROM empleados WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    $empleado = $stmt->fetch();
+    
+    if (!$empleado) {
+        $_SESSION['error_message'] = "Error: Empleado no encontrado";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    try {
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (id, nombres, apellidos, usuario, password, rol, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, 'activo', ?)");
+        $stmt->execute([$empleado_id, $empleado['nombres'], $empleado['apellidos'], $usuario, $password_hash, $rol, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $usuario, 'INSERT', 'nuevo_admin', null, "$usuario ($rol)", "Creación de nuevo administrador", $pdo);
+        
+        $_SESSION['success_message'] = "Administrador agregado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al agregar administrador: " . $e->getMessage();
+    }
+}
+
+// Procesar edición de empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $dni = $_POST['dni'];
+    $nombres = $_POST['nombres'];
+    $apellidos = $_POST['apellidos'];
+    $area = $_POST['area'];
+    $cargo = $_POST['cargo'];
+    $inicio_contrato = $_POST['inicio_contrato'];
+    $fin_contrato = $_POST['fin_contrato'];
+    $tipo_personal = $_POST['tipo_personal'];
+    
+    // Verificar si el DNI ya existe (excluyendo el empleado actual)
+    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ? AND id != ?");
+    $stmt->execute([$dni, $empleado_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe otro empleado con el DNI $dni";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    }
+    
+    // Campos de horario (solo para administrativos)
+    $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
+    $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
+    $entrada_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_tarde'] ?: '16:00:00') : null;
+    $salida_tarde = ($tipo_personal === 'Administrativo') ? ($_POST['salida_tarde'] ?: '19:00:00') : null;
+    
+    // Obtener datos anteriores para el historial
+    $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    $empleado_anterior = $stmt->fetch();
+    
+    // Procesar foto
+    $foto = $empleado_anterior['foto'];
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
+        // Eliminar foto anterior si existe
+        if ($foto && file_exists(FOTO_DIR . $foto)) {
+            unlink(FOTO_DIR . $foto);
+        }
+        
+        $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+        $foto = uniqid() . '.' . $extension;
+        move_uploaded_file($_FILES['foto']['tmp_name'], FOTO_DIR . $foto);
+    }
+    
+    try {
+        $sql = "UPDATE empleados SET dni = ?, nombres = ?, apellidos = ?, area = ?, puesto = ?, inicio_contrato = ?, fin_contrato = ?, tipo_personal = ?, entrada_manana = ?, salida_manana = ?, entrada_tarde = ?, salida_tarde = ?, foto = ? WHERE id = ?";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$dni, $nombres, $apellidos, $area, $cargo, $inicio_contrato, $fin_contrato, $tipo_personal, $entrada_manana, $salida_manana, $entrada_tarde, $salida_tarde, $foto, $empleado_id]);
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($empleado_anterior['dni'] != $dni) {
+            $cambios[] = "dni: {$empleado_anterior['dni']} -> $dni";
+        }
+        if ($empleado_anterior['nombres'] != $nombres) {
+            $cambios[] = "nombres: {$empleado_anterior['nombres']} -> $nombres";
+        }
+        if ($empleado_anterior['apellidos'] != $apellidos) {
+            $cambios[] = "apellidos: {$empleado_anterior['apellidos']} -> $apellidos";
+        }
+        if ($empleado_anterior['area'] != $area) {
+            $cambios[] = "area: {$empleado_anterior['area']} -> $area";
+        }
+        if ($empleado_anterior['puesto'] != $cargo) {
+            $cambios[] = "puesto: {$empleado_anterior['puesto']} -> $cargo";
+        }
+        if ($empleado_anterior['inicio_contrato'] != $inicio_contrato) {
+            $cambios[] = "inicio_contrato: {$empleado_anterior['inicio_contrato']} -> $inicio_contrato";
+        }
+        if ($empleado_anterior['fin_contrato'] != $fin_contrato) {
+            $cambios[] = "fin_contrato: {$empleado_anterior['fin_contrato']} -> $fin_contrato";
+        }
+        if ($empleado_anterior['tipo_personal'] != $tipo_personal) {
+            $cambios[] = "tipo_personal: {$empleado_anterior['tipo_personal']} -> $tipo_personal";
+        }
+        if ($foto != $empleado_anterior['foto']) {
+            $cambios[] = "foto: [actualizada]";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('empleados', $dni, 'UPDATE', 'datos_empleado', $empleado_anterior['dni'], $dni, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Empleado actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar edición de administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_administrador']) && $isSuperAdmin) {
+    $admin_id = $_POST['admin_id'];
+    $usuario = $_POST['usuario'];
+    $rol = $_POST['rol'];
+    $password = $_POST['password'];
+    
+    // Verificar si el usuario ya existe (excluyendo el actual)
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ? AND id != ?");
+    $stmt->execute([$usuario, $admin_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe otro usuario con el nombre de usuario $usuario";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Obtener datos anteriores para el historial
+    $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+    $stmt->execute([$admin_id]);
+    $admin_anterior = $stmt->fetch();
+    
+    try {
+        if (!empty($password)) {
+            // Verificar longitud de contraseña
+            if (strlen($password) < 4) {
+                $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
+                header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+                exit;
+            }
+            
+            $password_hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, password = ?, rol = ? WHERE id = ?");
+            $stmt->execute([$usuario, $password_hash, $rol, $admin_id]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, rol = ? WHERE id = ?");
+            $stmt->execute([$usuario, $rol, $admin_id]);
+        }
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($admin_anterior['usuario'] != $usuario) {
+            $cambios[] = "usuario: {$admin_anterior['usuario']} -> $usuario";
+        }
+        if ($admin_anterior['rol'] != $rol) {
+            $cambios[] = "rol: {$admin_anterior['rol']} -> $rol";
+        }
+        if (!empty($password)) {
+            $cambios[] = "password: [actualizada]";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'datos_admin', $admin_anterior['usuario'], $usuario, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Administrador actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar administrador: " . $e->getMessage();
+    }
+}
+
+// Procesar cambio de estado de empleado
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_empleado']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $nuevo_estado = $_POST['nuevo_estado'];
+    
+    try {
+        // Obtener datos anteriores
+        $stmt = $pdo->prepare("SELECT * FROM empleados WHERE id = ?");
+        $stmt->execute([$empleado_id]);
+        $empleado_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE empleados SET estado = ? WHERE id = ?");
+        $stmt->execute([$nuevo_estado, $empleado_id]);
+        
+        // Registrar en historial
+        registrarHistorial('empleados', $empleado_anterior['dni'], 'UPDATE', 'estado', $empleado_anterior['estado'], $nuevo_estado, "Cambio de estado de empleado", $pdo);
+        
+        $_SESSION['success_message'] = "Estado del empleado actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
+    }
+}
+
+// Procesar cambio de estado de administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_admin']) && $isSuperAdmin) {
+    $admin_id = $_POST['admin_id'];
+    $nuevo_estado = $_POST['nuevo_estado'];
+    
+    try {
+        // Obtener datos anteriores
+        $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+        $stmt->execute([$admin_id]);
+        $admin_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE usuarios_admin SET estado = ? WHERE id = ?");
+        $stmt->execute([$nuevo_estado, $admin_id]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $admin_anterior['usuario'], 'UPDATE', 'estado', $admin_anterior['estado'], $nuevo_estado, "Cambio de estado de administrador", $pdo);
+        
+        $_SESSION['success_message'] = "Estado del administrador actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
+    }
+}
+
+// Procesar ingreso manual de asistencia (solo para superadmin y supervisor)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_asistencia']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $fecha = $_POST['fecha'];
+    $hora = $_POST['hora'];
+    
+    try {
+        $stmt = $pdo->prepare("INSERT INTO registros_asistencia (empleado_id, fecha, hora, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, 'MANUAL')");
+        $stmt->execute([$empleado_id, $fecha, $hora, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
+        $stmtEmpleado->execute([$empleado_id]);
+        $empleado = $stmtEmpleado->fetch();
+        registrarHistorial('registros_asistencia', $empleado['nombre'], 'INSERT', 'asistencia_manual', null, "$fecha $hora", "Registro manual de asistencia", $pdo);
+        
+        $_SESSION['success_message'] = "Asistencia registrada correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=daily");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al registrar asistencia: " . $e->getMessage();
+    }
+}
+
+// Procesar registro manual de permiso
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_permiso_manual']) && ($isSuperAdmin || $isSupervisor)) {
+    $empleado_id = $_POST['empleado_id'];
+    $tipo_permiso = $_POST['tipo_permiso'];
+    $motivo = $_POST['motivo'];
+    $fecha_permiso = $_POST['fecha_permiso'];
+    $hora_salida = $_POST['hora_salida'];
+    $hora_retorno = $_POST['hora_retorno'];
+    
+    try {
+        $stmt = $pdo->prepare("INSERT INTO permisos (empleado_id, tipo_permiso, motivo, fecha_permiso, hora_salida, hora_retorno, hora_registro, registrado_por, tipo_registro) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, 'MANUAL')");
+        $stmt->execute([$empleado_id, $tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        $stmtEmpleado = $pdo->prepare("SELECT CONCAT(apellidos, ' ', nombres) as nombre FROM empleados WHERE id = ?");
+        $stmtEmpleado->execute([$empleado_id]);
+        $empleado = $stmtEmpleado->fetch();
+        registrarHistorial('permisos', $empleado['nombre'], 'INSERT', 'permiso_manual', null, "$tipo_permiso - $fecha_permiso", $motivo, $pdo);
+        
+        $_SESSION['success_message'] = "Permiso registrado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al registrar permiso: " . $e->getMessage();
+    }
+}
+
+// Procesar actualización de permiso
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_permiso']) && ($isSuperAdmin || $isSupervisor)) {
+    $permiso_id = $_POST['permiso_id'];
+    $tipo_permiso = $_POST['tipo_permiso'];
+    $motivo = $_POST['motivo'];
+    $fecha_permiso = $_POST['fecha_permiso'];
+    $hora_salida = $_POST['hora_salida'];
+    $hora_retorno = $_POST['hora_retorno'];
+    
+    try {
+        // Obtener datos anteriores para el historial
+        $stmt = $pdo->prepare("SELECT * FROM permisos WHERE id = ?");
+        $stmt->execute([$permiso_id]);
+        $permiso_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE permisos SET tipo_permiso = ?, motivo = ?, fecha_permiso = ?, hora_salida = ?, hora_retorno = ? WHERE id = ?");
+        $stmt->execute([$tipo_permiso, $motivo, $fecha_permiso, $hora_salida, $hora_retorno, $permiso_id]);
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($permiso_anterior['tipo_permiso'] != $tipo_permiso) {
+            $cambios[] = "tipo_permiso: {$permiso_anterior['tipo_permiso']} -> $tipo_permiso";
+        }
+        if ($permiso_anterior['fecha_permiso'] != $fecha_permiso) {
+            $cambios[] = "fecha_permiso: {$permiso_anterior['fecha_permiso']} -> $fecha_permiso";
+        }
+        if ($permiso_anterior['hora_salida'] != $hora_salida) {
+            $cambios[] = "hora_salida: {$permiso_anterior['hora_salida']} -> $hora_salida";
+        }
+        if ($permiso_anterior['hora_retorno'] != $hora_retorno) {
+            $cambios[] = "hora_retorno: {$permiso_anterior['hora_retorno']} -> $hora_retorno";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('permisos', $permiso_anterior['empleado_id'], 'UPDATE', 'datos_permiso', $permiso_anterior['tipo_permiso'], $tipo_permiso, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Permiso actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=permission");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar permiso: " . $e->getMessage();
+    }
+}
+
+// Procesar actualización de configuración
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configuracion']) && $isSuperAdmin) {
+    $minutos_tolerancia = $_POST['minutos_tolerancia'];
+    
+    try {
+        $valor_anterior = getConfig('minutos_tolerancia', $pdo);
+        updateConfig('minutos_tolerancia', $minutos_tolerancia, $pdo);
+        
+        // Registrar en historial
+        registrarHistorial('configuracion_sistema', 'Sistema', 'UPDATE', 'minutos_tolerancia', $valor_anterior, $minutos_tolerancia, "Actualización de minutos de tolerancia", $pdo);
+        
+        $_SESSION['success_message'] = "Configuración actualizada correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=config");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar configuración: " . $e->getMessage();
+    }
+}
+
+// NUEVA FUNCIÓN: Exportar a Excel CON DISEÑO PROFESIONAL MEJORADO
+if (isset($_GET['export_excel'])) {
+    $reportType = $_GET['report_type'] ?? 'daily';
+    $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
+    $fechaFin = $_GET['fecha_fin'] ?? date('Y-m-d');
+    
+    // Obtener filtros actuales
+    $filtros = [];
+    $searchTerm = $_GET['search_term'] ?? '';
+    $filterArea = $_GET['filter_area'] ?? '';
+    $filterCargo = $_GET['filter_cargo'] ?? '';
+    $filterEstado = $_GET['filter_estado'] ?? '';
+    $filterRol = $_GET['filter_rol'] ?? '';
+    $filterTurno = $_GET['filter_turno'] ?? '';
+    
+    if ($searchTerm) $filtros['busqueda'] = $searchTerm;
+    if ($filterArea) $filtros['area'] = $filterArea;
+    if ($filterCargo) $filtros['cargo'] = $filterCargo;
+    if ($filterEstado) $filtros['estado'] = $filterEstado;
+    if ($filterRol) $filtros['rol'] = $filterRol;
+    if ($filterTurno) $filtros['turno'] = $filterTurno;
+    
+    // Obtener todos los datos sin paginación
+    switch ($reportType) {
+        case 'tardiness':
+            $allData = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin, $filtros);
+            $filename = "Reporte_Tardanzas_" . date('Y-m-d') . ".xls";
+            $reportTitle = "REPORTE DE TARDANZAS";
+            break;
+            
+        case 'permission':
+            $allData = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin, $filtros);
+            $permissionTotals = $reportGenerator->getPermissionTotals($fechaInicio, $fechaFin, $filtros);
+            $filename = "Reporte_Permisos_" . date('Y-m-d') . ".xls";
+            $reportTitle = "REPORTE DE PERMISOS";
+            break;
+            
+        case 'no_asistencia':
+            $allData = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin, $filtros);
+            $filename = "Empleados_Sin_Asistencia_" . date('Y-m-d') . ".xls";
+            $reportTitle = "EMPLEADOS SIN ASISTENCIA";
+            break;
+            
+        case 'trabajadores':
+            $allData = $reportGenerator->getEmployees($filtros);
+            $filename = "Lista_Trabajadores_" . date('Y-m-d') . ".xls";
+            $reportTitle = "LISTA DE TRABAJADORES";
+            break;
+            
+        case 'administradores':
+            $allData = $reportGenerator->getAdministradores($filtros);
+            $filename = "Lista_Administradores_" . date('Y-m-d') . ".xls";
+            $reportTitle = "LISTA DE ADMINISTRADORES";
+            break;
+            
+        case 'history':
+            $historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
+            $historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
+            $historialTabla = $_GET['historial_tabla'] ?? '';
+            $historialAccion = $_GET['historial_accion'] ?? '';
+            $historialCreadoPor = $_GET['historial_creado_por'] ?? '';
+            
+            $allData = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor, $filtros);
+            $filename = "Historial_Cambios_" . date('Y-m-d') . ".xls";
+            $reportTitle = "HISTORIAL DE CAMBIOS";
+            break;
+            
+        default: // daily
+            $allData = $reportGenerator->getDailyReport($fechaInicio, $fechaFin, $filtros);
+            $filename = "Reporte_Diario_" . date('Y-m-d') . ".xls";
+            $reportTitle = "REPORTE DIARIO DE ASISTENCIA";
+            break;
+    }
+    
+    // Configurar headers para descarga
+    header("Content-Type: application/vnd.ms-excel");
+    header("Content-Disposition: attachment; filename=\"$filename\"");
+    header("Cache-Control: max-age=0");
+    
+    // Abrir output
+    $output = fopen("php://output", "w");
+    
+    // Escribir encabezado corporativo MEJORADO
+    fwrite($output, "UNIVERSIDAD ROOSEVELT\t\t\t\t\t\t\t\n");
+    fwrite($output, "Sistema de Control de Asistencia\t\t\t\t\t\t\t\n");
+    fwrite($output, "$reportTitle\t\t\t\t\t\t\t\n");
+    fwrite($output, "\t\t\t\t\t\t\t\n");
+    
+    // Información de exportación
+    fwrite($output, "Exportado por: " . $_SESSION['admin_username'] . "\t\t\t\t\t\t\t\n");
+    fwrite($output, "Fecha de exportación: " . date('d/m/Y H:i:s') . "\t\t\t\t\t\t\t\n");
+    fwrite($output, "Período del reporte: " . date('d/m/Y', strtotime($fechaInicio)) . " - " . date('d/m/Y', strtotime($fechaFin)) . "\t\t\t\t\t\t\t\n");
+    fwrite($output, "\t\t\t\t\t\t\t\n");
+    
+    // Información de filtros aplicados - MEJORADO
+    $filtrosAplicados = [];
+    if (!empty($filterArea)) {
+        $filtrosAplicados[] = "Área: $filterArea";
+    }
+    if (!empty($filterCargo)) {
+        $filtrosAplicados[] = "Cargo: $filterCargo";
+    }
+    if (!empty($filterEstado)) {
+        $filtrosAplicados[] = "Estado: $filterEstado";
+    }
+    if (!empty($filterRol)) {
+        $filtrosAplicados[] = "Rol: $filterRol";
+    }
+    if (!empty($filterTurno)) {
+        $filtrosAplicados[] = "Turno: $filterTurno";
+    }
+    if (!empty($searchTerm)) {
+        $filtrosAplicados[] = "Búsqueda: $searchTerm";
+    }
+    
+    if (!empty($filtrosAplicados)) {
+        fwrite($output, "FILTROS APLICADOS:\t\t\t\t\t\t\t\n");
+        foreach ($filtrosAplicados as $filtro) {
+            fwrite($output, "• $filtro\t\t\t\t\t\t\t\n");
+        }
+        fwrite($output, "\t\t\t\t\t\t\t\n");
+    }
+    
+    // Escribir headers según el tipo de reporte con numeración - MEJORADO
+    $headers = [];
+    switch ($reportType) {
+        case 'tardiness':
+            $headers = ['#', 'DNI', 'APELLIDOS Y NOMBRES', 'ÁREA', 'CARGO', 'FECHA', 'HORA ENTRADA MAÑANA', 'HORA MARCADA MAÑANA', 'TARDANZA MAÑANA', 'HORA ENTRADA TARDE', 'HORA MARCADA TARDE', 'TARDANZA TARDE'];
+            break;
+            
+        case 'permission':
+            $headers = ['#', 'DNI', 'APELLIDOS Y NOMBRES', 'ÁREA', 'CARGO', 'FECHA PERMISO', 'TIPO PERMISO', 'MOTIVO', 'HORA SALIDA', 'HORA RETORNO', 'HORA REGISTRO', 'REGISTRADO POR'];
+            break;
+            
+        case 'no_asistencia':
+            $headers = ['#', 'DNI', 'APELLIDOS Y NOMBRES', 'ÁREA', 'CARGO', 'TURNO', 'TOTAL FALTAS', 'FECHAS FALTAS'];
+            break;
+            
+        case 'trabajadores':
+            $headers = ['#', 'DNI', 'APELLIDOS', 'NOMBRES', 'ÁREA', 'CARGO', 'TIPO PERSONAL', 'ESTADO', 'INICIO CONTRATO', 'FIN CONTRATO', 'CREADO POR'];
+            break;
+            
+        case 'administradores':
+            $headers = ['#', 'APELLIDOS', 'NOMBRES', 'USUARIO', 'ROL', 'ESTADO', 'FECHA CREACIÓN', 'CREADO POR'];
+            break;
+            
+        case 'history':
+            $headers = ['#', 'TABLA AFECTADA', 'USUARIO AFECTADO', 'ACCIÓN', 'CAMPO MODIFICADO', 'VALOR ANTERIOR', 'VALOR NUEVO', 'MOTIVO', 'MODIFICADO POR', 'FECHA MODIFICACIÓN'];
+            break;
+            
+        default: // daily
+            $headers = ['#', 'FECHA', 'DNI', 'APELLIDOS Y NOMBRES', 'ÁREA', 'CARGO', 'ENTRADA MAÑANA', 'SALIDA MAÑANA', 'ENTRADA TARDE', 'SALIDA TARDE', 'REGISTROS', 'REGISTRADO POR'];
+            break;
+    }
+    
+    fputcsv($output, $headers, "\t");
+    
+    // Escribir datos con numeración - MEJORADO
+    $contador = 1;
+    foreach ($allData as $row) {
+        if (isset($row['es_total']) && $row['es_total']) {
+            // Escribir fila de totales con formato mejorado
+            switch ($reportType) {
+                case 'no_asistencia':
+                    fputcsv($output, ['', '', '', '', '', '', 'TOTALES:', 'MAÑANA: ' . $row['total_faltas_manana'], 'TARDE: ' . $row['total_faltas_tarde'], 'TOTAL: ' . $row['total_general']], "\t");
+                    break;
+                case 'tardiness':
+                    fputcsv($output, ['', '', '', '', '', '', 'TOTALES:', '', $row['total_tardanza_manana'], '', '', $row['total_tardanza_tarde'], 'TOTAL: ' . $row['total_tardanza']], "\t");
+                    break;
+                case 'permission':
+                    // Total general para permisos
+                    $totalGeneral = 0;
+                    $totalesTexto = [];
+                    foreach ($permissionTotals as $total) {
+                        $totalesTexto[] = $total['tipo_permiso'] . ': ' . $total['total'];
+                        $totalGeneral += $total['total'];
+                    }
+                    $totalesTexto[] = 'TOTAL GENERAL: ' . $totalGeneral;
+                    fputcsv($output, ['', '', '', '', '', '', 'TOTALES:', implode(' | ', $totalesTexto)], "\t");
+                    break;
+            }
+            continue;
+        }
+        
+        switch ($reportType) {
+            case 'tardiness':
+                // Combinar tardanzas de mañana y tarde
+                $tardanzasCombinadas = [];
+                
+                // Procesar tardanzas de mañana
+                foreach ($row['tardanzas_manana'] as $tardanza) {
+                    $tardanzasCombinadas[$tardanza['fecha']] = [
+                        'manana' => $tardanza,
+                        'tarde' => null
+                    ];
+                }
+                
+                // Procesar tardanzas de tarde
+                foreach ($row['tardanzas_tarde'] as $tardanza) {
+                    if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
+                        $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
+                    } else {
+                        $tardanzasCombinadas[$tardanza['fecha']] = [
+                            'manana' => null,
+                            'tarde' => $tardanza
+                        ];
+                    }
+                }
+                
+                // Mostrar todas las tardanzas combinadas
+                foreach ($tardanzasCombinadas as $fecha => $tardanzas) {
+                    fputcsv($output, [
+                        $contador++,
+                        $row['dni'],
+                        $row['nombre_completo'],
+                        $row['area'],
+                        $row['puesto'],
+                        $fecha,
+                        $tardanzas['manana'] ? $tardanzas['manana']['hora_entrada'] : '-',
+                        $tardanzas['manana'] ? $tardanzas['manana']['hora_marcada'] : '-',
+                        $tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-',
+                        $tardanzas['tarde'] ? $tardanzas['tarde']['hora_entrada'] : '-',
+                        $tardanzas['tarde'] ? $tardanzas['tarde']['hora_marcada'] : '-',
+                        $tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-'
+                    ], "\t");
+                }
+                break;
+                
+            case 'permission':
+                fputcsv($output, [
+                    $contador++,
+                    $row['dni'],
+                    $row['nombre_completo'],
+                    $row['area'],
+                    $row['puesto'],
+                    $row['fecha_permiso'],
+                    $row['tipo_permiso'],
+                    $row['motivo'],
+                    $row['hora_salida'],
+                    $row['hora_retorno'],
+                    $row['hora_registro'],
+                    $row['registrado_por']
+                ], "\t");
+                break;
+                
+            case 'no_asistencia':
+                // Mostrar faltas por turno
+                if (!empty($row['faltas_manana'])) {
+                    fputcsv($output, [
+                        $contador++,
+                        $row['dni'],
+                        $row['nombre_completo'],
+                        $row['area'],
+                        $row['puesto'],
+                        'MAÑANA',
+                        $row['total_faltas_manana'],
+                        implode(', ', array_slice($row['faltas_manana'], 0, 10)) . (count($row['faltas_manana']) > 10 ? '...' : '')
+                    ], "\t");
+                }
+                
+                if (!empty($row['faltas_tarde'])) {
+                    fputcsv($output, [
+                        $contador++,
+                        $row['dni'],
+                        $row['nombre_completo'],
+                        $row['area'],
+                        $row['puesto'],
+                        'TARDE',
+                        $row['total_faltas_tarde'],
+                        implode(', ', array_slice($row['faltas_tarde'], 0, 10)) . (count($row['faltas_tarde']) > 10 ? '...' : '')
+                    ], "\t");
+                }
+                break;
+                
+            case 'trabajadores':
+                fputcsv($output, [
+                    $contador++,
+                    $row['dni'],
+                    $row['apellidos'],
+                    $row['nombres'],
+                    $row['area'],
+                    $row['puesto'],
+                    $row['tipo_personal'],
+                    $row['estado'],
+                    $row['inicio_contrato'],
+                    $row['fin_contrato'],
+                    $row['creado_por_nombre']
+                ], "\t");
+                break;
+                
+            case 'administradores':
+                fputcsv($output, [
+                    $contador++,
+                    $row['apellidos'],
+                    $row['nombres'],
+                    $row['usuario'],
+                    $row['rol'],
+                    $row['estado'],
+                    $row['fecha_creacion'],
+                    $row['creado_por_nombre']
+                ], "\t");
+                break;
+                
+            case 'history':
+                fputcsv($output, [
+                    $contador++,
+                    $row['tabla_afectada'],
+                    $row['usuario_afectado'],
+                    $row['accion'],
+                    $row['campo_modificado'],
+                    $row['valor_anterior'],
+                    $row['valor_nuevo'],
+                    $row['motivo'],
+                    $row['modificado_por_nombre'],
+                    $row['fecha_modificacion']
+                ], "\t");
+                break;
+                
+            default: // daily
+                fputcsv($output, [
+                    $contador++,
+                    $row['fecha'],
+                    $row['dni'],
+                    $row['nombre_completo'],
+                    $row['area'],
+                    $row['puesto'],
+                    !empty($row['registros_entrada_manana']) ? min($row['registros_entrada_manana']) : '-',
+                    !empty($row['registros_salida_manana']) ? min($row['registros_salida_manana']) : '-',
+                    !empty($row['registros_entrada_tarde']) ? min($row['registros_entrada_tarde']) : '-',
+                    !empty($row['registros_salida_tarde']) ? min($row['registros_salida_tarde']) : '-',
+                    !empty($row['todos_registros']) ? implode(', ', $row['todos_registros']) : '-',
+                    !empty($row['todos_registradores']) ? implode(', ', $row['todos_registradores']) : '-'
+                ], "\t");
+                break;
+        }
+    }
+    
+    // Escribir pie de página MEJORADO
+    fwrite($output, "\t\t\t\t\t\t\t\n");
+    fwrite($output, "------------------------------------------------------------------------------------------------------------------------------------\t\t\t\t\t\t\t\n");
+    fwrite($output, "Documento generado automáticamente por el Sistema de Control de Asistencia - Universidad Roosevelt\t\t\t\t\t\t\t\n");
+    fwrite($output, "Fecha de generación: " . date('d/m/Y H:i:s') . "\t\t\t\t\t\t\t\n");
+    
+    fclose($output);
+    exit;
+}
+
+// NUEVA FUNCIÓN: Aplicar filtros en el servidor para TODOS los datos
+function aplicarFiltrosServidor($data, $filtros) {
+    if (empty($filtros) || empty($data)) {
+        return $data;
+    }
+    
+    return array_filter($data, function($row) use ($filtros) {
+        $pasaFiltro = true;
+        
+        foreach ($filtros as $campo => $valor) {
+            if (!empty($valor)) {
+                $valorFila = '';
+                
+                // Obtener el valor de la fila según el campo
+                switch ($campo) {
+                    case 'area':
+                        $valorFila = $row['area'] ?? '';
+                        break;
+                    case 'cargo':
+                        $valorFila = $row['puesto'] ?? '';
+                        break;
+                    case 'estado':
+                        $valorFila = $row['estado'] ?? '';
+                        break;
+                    case 'rol':
+                        $valorFila = $row['rol'] ?? '';
+                        break;
+                    case 'turno':
+                        $valorFila = $row['turno'] ?? '';
+                        break;
+                    case 'busqueda':
+                        // Buscar en todos los campos de texto
+                        $valorFila = strtolower(implode(' ', array_filter($row, function($v) {
+                            return is_string($v) && !empty($v);
+                        })));
+                        break;
+                }
+                
+                if ($campo === 'busqueda') {
+                    if (strpos($valorFila, strtolower($valor)) === false) {
+                        $pasaFiltro = false;
+                        break;
+                    }
+                } else {
+                    if ($valorFila !== $valor) {
+                        $pasaFiltro = false;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return $pasaFiltro;
+    });
+}
+
 // Función auxiliar para convertir minutos a tiempo
 function minutesToTime($minutes) {
     $horas = floor($minutes / 60);
     $minutos = $minutes % 60;
     return sprintf("%02d:%02d", $horas, $minutos);
 }
-
-// Instanciar el generador de reportes
-$reportGenerator = new ReportGenerator($pdo);
 
 // Determinar qué sección mostrar - AHORA TODO ES DASHBOARD
 $section = 'dashboard';
@@ -1770,6 +2117,11 @@ if (isset($_GET['get_cargos_by_area'])) {
             background: var(--light);
             color: var(--dark);
             border: 1px solid #dee2e6;
+        }
+        
+        .btn-excel {
+            background: linear-gradient(135deg, #1d6f42 0%, #28a745 100%);
+            color: white;
         }
         
         .action-buttons {
@@ -2519,7 +2871,12 @@ if (isset($_GET['get_cargos_by_area'])) {
                 </button>
             <?php endif; ?>
             
-            <!-- BOTÓN DE EXPORTAR EXCEL ELIMINADO -->
+            <!-- BOTÓN DE EXPORTAR EXCEL AGREGADO -->
+            <?php if ($reportType !== 'config'): ?>
+                <a href="?<?= http_build_query(array_merge($_GET, ['export_excel' => 1])) ?>" class="btn btn-excel">
+                    <i class="fas fa-file-excel"></i> Excel
+                </a>
+            <?php endif; ?>
             
             <!-- Botón para limpiar filtros -->
             <a href="?section=dashboard&report_type=<?= $reportType ?>" class="btn btn-light">
@@ -2694,43 +3051,41 @@ if (isset($_GET['get_cargos_by_area'])) {
                                     <?php switch ($reportType): 
                                         case 'tardiness': ?>
                                             <th>DNI</th>
-                                            <th>APELLIDOS</th>
-                                            <th>NOMBRES</th>
+                                            <th>APELLIDOS Y NOMBRES</th>
+                                            <th>ÁREA</th>
+                                            <th>CARGO</th>
                                             <th>FECHA</th>
-                                            <th>HEM</th>
+                                            <th>HORA ENTRADA MAÑANA</th>
                                             <th>HORA MARCADA MAÑANA</th>
                                             <th>TARDANZA MAÑANA</th>
-                                            <th>HET</th>
+                                            <th>HORA ENTRADA TARDE</th>
                                             <th>HORA MARCADA TARDE</th>
                                             <th>TARDANZA TARDE</th>
-                                            <th></th>
                                             <?php break; ?>
                                             
                                         <?php case 'permission': ?>
                                             <th>DNI</th>
-                                            <th>APELLIDOS</th>
-                                            <th>NOMBRES</th>
+                                            <th>APELLIDOS Y NOMBRES</th>
                                             <th>ÁREA</th>
                                             <th>CARGO</th>
-                                            <th>FECHA</th>
+                                            <th>FECHA PERMISO</th>
                                             <th>TIPO PERMISO</th>
                                             <th>MOTIVO</th>
-                                            <th>SALIDA</th>
-                                            <th>RETORNO</th>
-                                            <th>REGISTRO</th>
+                                            <th>HORA SALIDA</th>
+                                            <th>HORA RETORNO</th>
+                                            <th>HORA REGISTRO</th>
                                             <th>REGISTRADO POR</th>
                                             <th>ACCIONES</th>
                                             <?php break; ?>
                                             
                                         <?php case 'no_asistencia': ?>
                                             <th>DNI</th>
-                                            <th>APELLIDOS</th>
-                                            <th>NOMBRES</th>
+                                            <th>APELLIDOS Y NOMBRES</th>
                                             <th>ÁREA</th>
                                             <th>CARGO</th>
                                             <th>TURNO</th>
                                             <th>TOTAL FALTAS</th>
-                                            <th>FECHAS</th>
+                                            <th>FECHAS FALTAS</th>
                                             <?php break; ?>
                                             
                                         <?php case 'trabajadores': ?>
@@ -2740,7 +3095,10 @@ if (isset($_GET['get_cargos_by_area'])) {
                                             <th>NOMBRES</th>
                                             <th>ÁREA</th>
                                             <th>CARGO</th>
+                                            <th>TIPO PERSONAL</th>
                                             <th>ESTADO</th>
+                                            <th>INICIO CONTRATO</th>
+                                            <th>FIN CONTRATO</th>
                                             <th>CREADO POR</th>
                                             <th>ACCIONES</th>
                                             <?php break; ?>
@@ -2752,7 +3110,6 @@ if (isset($_GET['get_cargos_by_area'])) {
                                             <th>ROL</th>
                                             <th>ESTADO</th>
                                             <th>FECHA CREACIÓN</th>
-                                            <th>HORA</th>
                                             <th>CREADO POR</th>
                                             <th>ACCIONES</th>
                                             <?php break; ?>
@@ -2760,27 +3117,25 @@ if (isset($_GET['get_cargos_by_area'])) {
                                         <?php case 'history': ?>
                                             <th>TABLA AFECTADA</th>
                                             <th>USUARIO AFECTADO</th>
-                                            <th>ACCION</th>
+                                            <th>ACCIÓN</th>
                                             <th>CAMPO MODIFICADO</th>
                                             <th>VALOR ANTERIOR</th>
                                             <th>VALOR NUEVO</th>
                                             <th>MOTIVO</th>
                                             <th>MODIFICADO POR</th>
-                                            <th>FECHA MODIFICACION</th>
-                                            <th>HORA MODIFICACION</th>
+                                            <th>FECHA MODIFICACIÓN</th>
                                             <?php break; ?>
                                             
                                         <?php default: // daily ?>
                                             <th>FECHA</th>
                                             <th>DNI</th>
-                                            <th>APELLIDOS</th>
-                                            <th>NOMBRES</th>
+                                            <th>APELLIDOS Y NOMBRES</th>
                                             <th>ÁREA</th>
                                             <th>CARGO</th>
-                                            <th>ENT. MAÑANA</th>
-                                            <th>SAL. MAÑANA</th>
-                                            <th>ENT. TARDE</th>
-                                            <th>SAL. TARDE</th>
+                                            <th>ENTRADA MAÑANA</th>
+                                            <th>SALIDA MAÑANA</th>
+                                            <th>ENTRADA TARDE</th>
+                                            <th>SALIDA TARDE</th>
                                             <th>REGISTROS</th>
                                             <th>REGISTRADO POR</th>
                                     <?php endswitch; ?>
@@ -2859,8 +3214,9 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                     <?php endif; ?>
                                                     
                                                     <td><?= htmlspecialchars($row['dni']) ?></td>
-                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
-                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
+                                                    <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
+                                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                     <td class="text-center nowrap"><?= $fecha ?></td>
                                                     
                                                     <!-- Datos mañana -->
@@ -2879,8 +3235,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 
                                             <?php case 'permission': ?>
                                                 <td><?= htmlspecialchars($row['dni']) ?></td>
-                                                <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
-                                                <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
                                                 <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                 <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                 <td class="text-center nowrap"><?= date('d/m/Y', strtotime($row['fecha_permiso'])) ?></td>
@@ -2903,8 +3258,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 <!-- Mostrar faltas por turno -->
                                                 <?php if (!empty($row['faltas_manana'])): ?>
                                                     <td><?= htmlspecialchars($row['dni']) ?></td>
-                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
-                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
                                                     <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                     <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                     <td class="text-center">
@@ -2922,8 +3276,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 
                                                 <?php if (!empty($row['faltas_tarde'])): ?>
                                                     <td><?= htmlspecialchars($row['dni']) ?></td>
-                                                    <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
-                                                    <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                    <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
                                                     <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                     <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                     <td class="text-center">
@@ -2949,11 +3302,14 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 <td><?= htmlspecialchars($row['nombres']) ?></td>
                                                 <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                 <td><?= htmlspecialchars($row['puesto']) ?></td>
+                                                <td><?= htmlspecialchars($row['tipo_personal']) ?></td>
                                                 <td>
                                                     <span class="badge <?= $row['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
                                                         <?= $row['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
                                                     </span>
                                                 </td>
+                                                <td><?= $row['inicio_contrato'] ?></td>
+                                                <td><?= $row['fin_contrato'] ?></td>
                                                 <td><?= htmlspecialchars($row['creado_por_nombre']) ?></td>
                                                 <td>
                                                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
@@ -2992,7 +3348,6 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                     </span>
                                                 </td>
                                                 <td><?= date('d/m/Y', strtotime($row['fecha_creacion'])) ?></td>
-                                                <td><?= date('H:i:s', strtotime($row['fecha_creacion'])) ?></td>
                                                 <td><?= htmlspecialchars($row['creado_por_nombre']) ?></td>
                                                 <td>
                                                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
@@ -3034,15 +3389,13 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 <td><?= htmlspecialchars($row['valor_nuevo']) ?></td>
                                                 <td><?= htmlspecialchars($row['motivo']) ?></td>
                                                 <td><?= htmlspecialchars($row['modificado_por_nombre']) ?></td>
-                                                <td><?= date('d/m/Y', strtotime($row['fecha_modificacion'])) ?></td>
-                                                <td><?= date('H:i:s', strtotime($row['fecha_modificacion'])) ?></td>
+                                                <td><?= date('d/m/Y H:i:s', strtotime($row['fecha_modificacion'])) ?></td>
                                                 <?php break; ?>
                                                 
                                             <?php default: // daily ?>
                                                 <td class="text-center nowrap"><?= $row['fecha'] ?></td>
                                                 <td class="text-center"><?= htmlspecialchars($row['dni']) ?></td>
-                                                <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
-                                                <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
+                                                <td><?= htmlspecialchars($row['nombre_completo']) ?></td>
                                                 <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                 <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                 
@@ -3743,8 +4096,6 @@ if (isset($_GET['get_cargos_by_area'])) {
                 $('#filtersForm').submit();
             });
         });
-        
-        // FUNCIÓN DE EXPORTAR EXCEL ELIMINADA
         
         // Funciones para los modales
         function openAddEmpleadoModal() {

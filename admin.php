@@ -140,7 +140,7 @@ try {
 // Verificar permisos según rol
 $isSuperAdmin = ($_SESSION['admin_role'] === 'admin');
 $isSupervisor = ($_SESSION['admin_role'] === 'supervisor');
-$isEspectador = ($_SESSION['admin_role'] === 'espectador'); // NUEVO ROL ESPECTADOR
+// ELIMINADO EL ROL DE ESPECTADOR
 
 // Obtener configuración del sistema
 function getConfig($clave, $pdo) {
@@ -173,6 +173,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) &
     $fin_contrato = $_POST['fin_contrato'];
     $tipo_personal = $_POST['tipo_personal'];
     
+    // Verificar si el DNI ya existe
+    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ?");
+    $stmt->execute([$dni]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe un empleado con el DNI $dni";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    }
+    
     // Campos de horario (solo para administrativos)
     $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
     $salida_manana = ($tipo_personal === 'Administrativo') ? ($_POST['salida_manana'] ?: '13:00:00') : null;
@@ -195,10 +204,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_empleado']) &
         registrarHistorial('empleados', $dni, 'INSERT', 'nuevo_empleado', null, "$apellidos $nombres", "Creación de nuevo empleado", $pdo);
         
         $_SESSION['success_message'] = "Empleado agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al agregar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar agregar administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_administrador']) && $isSuperAdmin) {
+    $empleado_id = $_POST['empleado_id'];
+    $usuario = $_POST['usuario'];
+    $password = $_POST['password'];
+    $rol = $_POST['rol'];
+    
+    // Verificar si el usuario ya existe
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ?");
+    $stmt->execute([$usuario]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe un usuario con el nombre de usuario $usuario";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Verificar si el empleado ya tiene una cuenta de administrador
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Este empleado ya tiene una cuenta de administrador";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Verificar longitud de contraseña
+    if (strlen($password) < 4) {
+        $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Obtener datos del empleado
+    $stmt = $pdo->prepare("SELECT nombres, apellidos FROM empleados WHERE id = ?");
+    $stmt->execute([$empleado_id]);
+    $empleado = $stmt->fetch();
+    
+    if (!$empleado) {
+        $_SESSION['error_message'] = "Error: Empleado no encontrado";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    try {
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (id, nombres, apellidos, usuario, password, rol, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, 'activo', ?)");
+        $stmt->execute([$empleado_id, $empleado['nombres'], $empleado['apellidos'], $usuario, $password_hash, $rol, $_SESSION['admin_id']]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $usuario, 'INSERT', 'nuevo_admin', null, "$usuario ($rol)", "Creación de nuevo administrador", $pdo);
+        
+        $_SESSION['success_message'] = "Administrador agregado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al agregar administrador: " . $e->getMessage();
     }
 }
 
@@ -213,6 +281,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) &&
     $inicio_contrato = $_POST['inicio_contrato'];
     $fin_contrato = $_POST['fin_contrato'];
     $tipo_personal = $_POST['tipo_personal'];
+    
+    // Verificar si el DNI ya existe (excluyendo el empleado actual)
+    $stmt = $pdo->prepare("SELECT id FROM empleados WHERE dni = ? AND id != ?");
+    $stmt->execute([$dni, $empleado_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe otro empleado con el DNI $dni";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    }
     
     // Campos de horario (solo para administrativos)
     $entrada_manana = ($tipo_personal === 'Administrativo') ? ($_POST['entrada_manana'] ?: '08:00:00') : null;
@@ -278,10 +355,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_empleado']) &&
         }
         
         $_SESSION['success_message'] = "Empleado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al actualizar empleado: " . $e->getMessage();
+    }
+}
+
+// Procesar edición de administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_administrador']) && $isSuperAdmin) {
+    $admin_id = $_POST['admin_id'];
+    $usuario = $_POST['usuario'];
+    $rol = $_POST['rol'];
+    $password = $_POST['password'];
+    
+    // Verificar si el usuario ya existe (excluyendo el actual)
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ? AND id != ?");
+    $stmt->execute([$usuario, $admin_id]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe otro usuario con el nombre de usuario $usuario";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    }
+    
+    // Obtener datos anteriores para el historial
+    $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+    $stmt->execute([$admin_id]);
+    $admin_anterior = $stmt->fetch();
+    
+    try {
+        if (!empty($password)) {
+            // Verificar longitud de contraseña
+            if (strlen($password) < 4) {
+                $_SESSION['error_message'] = "Error: La contraseña debe tener al menos 4 caracteres";
+                header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+                exit;
+            }
+            
+            $password_hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, password = ?, rol = ? WHERE id = ?");
+            $stmt->execute([$usuario, $password_hash, $rol, $admin_id]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, rol = ? WHERE id = ?");
+            $stmt->execute([$usuario, $rol, $admin_id]);
+        }
+        
+        // Registrar en historial
+        $cambios = [];
+        if ($admin_anterior['usuario'] != $usuario) {
+            $cambios[] = "usuario: {$admin_anterior['usuario']} -> $usuario";
+        }
+        if ($admin_anterior['rol'] != $rol) {
+            $cambios[] = "rol: {$admin_anterior['rol']} -> $rol";
+        }
+        if (!empty($password)) {
+            $cambios[] = "password: [actualizada]";
+        }
+        
+        if (!empty($cambios)) {
+            registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'datos_admin', $admin_anterior['usuario'], $usuario, "Cambios: " . implode(', ', $cambios), $pdo);
+        }
+        
+        $_SESSION['success_message'] = "Administrador actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar administrador: " . $e->getMessage();
     }
 }
 
@@ -303,7 +442,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_emplea
         registrarHistorial('empleados', $empleado_anterior['dni'], 'UPDATE', 'estado', $empleado_anterior['estado'], $nuevo_estado, "Cambio de estado de empleado", $pdo);
         
         $_SESSION['success_message'] = "Estado del empleado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=trabajadores");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=trabajadores");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
+    }
+}
+
+// Procesar cambio de estado de administrador
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_admin']) && $isSuperAdmin) {
+    $admin_id = $_POST['admin_id'];
+    $nuevo_estado = $_POST['nuevo_estado'];
+    
+    try {
+        // Obtener datos anteriores
+        $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+        $stmt->execute([$admin_id]);
+        $admin_anterior = $stmt->fetch();
+        
+        $stmt = $pdo->prepare("UPDATE usuarios_admin SET estado = ? WHERE id = ?");
+        $stmt->execute([$nuevo_estado, $admin_id]);
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $admin_anterior['usuario'], 'UPDATE', 'estado', $admin_anterior['estado'], $nuevo_estado, "Cambio de estado de administrador", $pdo);
+        
+        $_SESSION['success_message'] = "Estado del administrador actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=administradores");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
@@ -406,115 +570,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_permiso']) && 
     }
 }
 
-// Procesar agregar administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_admin']) && $isSuperAdmin) {
-    $nombres = $_POST['nombres'];
-    $apellidos = $_POST['apellidos'];
-    $area = $_POST['area'];
-    $cargo = $_POST['cargo'];
-    $usuario = $_POST['usuario'];
-    $password = $_POST['password'];
-    
-    // Validar longitud de contraseña (mínimo 4 caracteres)
-    if (strlen($password) < 4) {
-        $_SESSION['error_message'] = "La contraseña debe tener al menos 4 caracteres";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
-        exit;
-    }
-    
-    $password = password_hash($password, PASSWORD_DEFAULT);
-    $rol = $_POST['rol'];
-    
-    try {
-        $stmt = $pdo->prepare("INSERT INTO usuarios_admin (nombres, apellidos, area, cargo, usuario, password, rol, estado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, 'activo', ?)");
-        $stmt->execute([$nombres, $apellidos, $area, $cargo, $usuario, $password, $rol, $_SESSION['admin_id']]);
-        
-        // Registrar en historial
-        registrarHistorial('usuarios_admin', $usuario, 'INSERT', 'nuevo_admin', null, "$apellidos $nombres", "Creación de nuevo administrador", $pdo);
-        
-        $_SESSION['success_message'] = "Administrador agregado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al agregar administrador: " . $e->getMessage();
-    }
-}
-
-// Procesar actualización de administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['editar_admin']) && $isSuperAdmin) {
-    $admin_id = $_POST['admin_id'];
-    $nombres = $_POST['nombres'];
-    $apellidos = $_POST['apellidos'];
-    $area = $_POST['area'];
-    $cargo = $_POST['cargo'];
-    $usuario = $_POST['usuario'];
-    $rol = $_POST['rol'];
-    
-    // Obtener datos anteriores para el historial
-    $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
-    $stmt->execute([$admin_id]);
-    $admin_anterior = $stmt->fetch();
-    
-    // Manejar la contraseña (solo actualizar si se proporciona una nueva)
-    $password_update = "";
-    $params = [$nombres, $apellidos, $area, $cargo, $usuario, $rol, $admin_id];
-    
-    if (!empty($_POST['password'])) {
-        $password = $_POST['password'];
-        
-        // Validar longitud de contraseña (mínimo 4 caracteres)
-        if (strlen($password) < 4) {
-            $_SESSION['error_message'] = "La contraseña debe tener al menos 4 caracteres";
-            header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
-            exit;
-        }
-        
-        $password = password_hash($password, PASSWORD_DEFAULT);
-        $password_update = ", password = ?";
-        array_splice($params, 5, 0, [$password]);
-    }
-    
-    try {
-        $sql = "UPDATE usuarios_admin SET nombres = ?, apellidos = ?, area = ?, cargo = ?, usuario = ?, rol = ? $password_update WHERE id = ?";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        
-        // Registrar en historial
-        $cambios = [];
-        if ($admin_anterior['nombres'] != $nombres) {
-            $cambios[] = "nombres: {$admin_anterior['nombres']} -> $nombres";
-        }
-        if ($admin_anterior['apellidos'] != $apellidos) {
-            $cambios[] = "apellidos: {$admin_anterior['apellidos']} -> $apellidos";
-        }
-        if ($admin_anterior['area'] != $area) {
-            $cambios[] = "area: {$admin_anterior['area']} -> $area";
-        }
-        if ($admin_anterior['cargo'] != $cargo) {
-            $cambios[] = "cargo: {$admin_anterior['cargo']} -> $cargo";
-        }
-        if ($admin_anterior['usuario'] != $usuario) {
-            $cambios[] = "usuario: {$admin_anterior['usuario']} -> $usuario";
-        }
-        if ($admin_anterior['rol'] != $rol) {
-            $cambios[] = "rol: {$admin_anterior['rol']} -> $rol";
-        }
-        if (!empty($_POST['password'])) {
-            $cambios[] = "contraseña: [actualizada]";
-        }
-        
-        if (!empty($cambios)) {
-            registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'datos_admin', $admin_anterior['usuario'], $usuario, "Cambios: " . implode(', ', $cambios), $pdo);
-        }
-        
-        $_SESSION['success_message'] = "Administrador actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al actualizar administrador: " . $e->getMessage();
-    }
-}
-
 // Procesar actualización de configuración
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configuracion']) && $isSuperAdmin) {
     $minutos_tolerancia = $_POST['minutos_tolerancia'];
@@ -527,40 +582,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configurac
         registrarHistorial('configuracion_sistema', 'Sistema', 'UPDATE', 'minutos_tolerancia', $valor_anterior, $minutos_tolerancia, "Actualización de minutos de tolerancia", $pdo);
         
         $_SESSION['success_message'] = "Configuración actualizada correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=config");
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=config");
         exit;
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error al actualizar configuración: " . $e->getMessage();
     }
 }
 
-// Procesar cambio de estado de administrador
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado_admin']) && $isSuperAdmin) {
-    $admin_id = $_POST['admin_id'];
-    $nuevo_estado = $_POST['nuevo_estado'];
-    
-    try {
-        // Obtener datos anteriores
-        $stmt = $pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
-        $stmt->execute([$admin_id]);
-        $admin_anterior = $stmt->fetch();
-        
-        $stmt = $pdo->prepare("UPDATE usuarios_admin SET estado = ? WHERE id = ?");
-        $stmt->execute([$nuevo_estado, $admin_id]);
-        
-        // Registrar en historial
-        registrarHistorial('usuarios_admin', $admin_anterior['usuario'], 'UPDATE', 'estado', $admin_anterior['estado'], $nuevo_estado, "Cambio de estado de administrador", $pdo);
-        
-        $_SESSION['success_message'] = "Estado actualizado correctamente";
-        header("Location: ".$_SERVER['PHP_SELF']."?section=admins");
-        exit;
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error al cambiar estado: " . $e->getMessage();
-    }
-}
-
-// Función para aplicar filtros a los datos
-function aplicarFiltros($data, $filtros) {
+// NUEVA FUNCIÓN: Aplicar filtros en el servidor para TODOS los datos
+function aplicarFiltrosServidor($data, $filtros) {
     if (empty($filtros) || empty($data)) {
         return $data;
     }
@@ -583,8 +613,17 @@ function aplicarFiltros($data, $filtros) {
                     case 'estado':
                         $valorFila = $row['estado'] ?? '';
                         break;
+                    case 'rol':
+                        $valorFila = $row['rol'] ?? '';
+                        break;
+                    case 'turno':
+                        $valorFila = $row['turno'] ?? '';
+                        break;
                     case 'busqueda':
-                        $valorFila = strtolower(implode(' ', $row));
+                        // Buscar en todos los campos de texto
+                        $valorFila = strtolower(implode(' ', array_filter($row, function($v) {
+                            return is_string($v) && !empty($v);
+                        })));
                         break;
                 }
                 
@@ -606,636 +645,6 @@ function aplicarFiltros($data, $filtros) {
     });
 }
 
-// Función para exportar a Excel - SOLO si NO es espectador
-if (isset($_GET['export_excel']) && !$isEspectador) {
-    $section = $_GET['section'] ?? 'dashboard';
-    $reportType = $_GET['report_type'] ?? 'daily';
-    $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
-    $fechaFin = $_GET['fecha_fin'] ?? date('Y-m-d');
-    $exportType = $_GET['export_type'] ?? 'filtered'; // SOLO 'filtered' ahora
-    
-    // Obtener filtros actuales
-    $filtros = [];
-    $filtros['area'] = $_GET['filter_area'] ?? '';
-    $filtros['cargo'] = $_GET['filter_cargo'] ?? '';
-    $filtros['busqueda'] = $_GET['search_term'] ?? '';
-    $filtros['estado'] = $_GET['filter_estado'] ?? '';
-    
-    // Instanciar el generador de reportes
-    $reportGenerator = new ReportGenerator($pdo);
-    
-    // Obtener datos según la sección
-    switch ($section) {
-        case 'dashboard':
-            switch ($reportType) {
-                case 'tardiness':
-                    $data = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin);
-                    $filename = "Reporte_Tardanzas_{$fechaInicio}_al_{$fechaFin}.xls";
-                    break;
-                case 'permission':
-                    $data = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin);
-                    $filename = "Reporte_Permisos_{$fechaInicio}_al_{$fechaFin}.xls";
-                    break;
-                case 'no_asistencia':
-                    $data = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin);
-                    $filename = "Reporte_Sin_Asistencia_{$fechaInicio}_al_{$fechaFin}.xls";
-                    break;
-                case 'areas':
-                    $tipoVista = $_GET['tipo_vista'] ?? 'detallado';
-                    $data = $reportGenerator->getAreaReport($fechaInicio, $fechaFin, $tipoVista);
-                    $filename = "Reporte_Areas_{$fechaInicio}_al_{$fechaFin}.xls";
-                    break;
-                default:
-                    $data = $reportGenerator->getDailyReport($fechaInicio, $fechaFin);
-                    $filename = "Reporte_Diario_{$fechaInicio}_al_{$fechaFin}.xls";
-                    break;
-            }
-            
-            // Aplicar filtros si es exportación filtrada
-            if (!empty($filtros)) {
-                $data = aplicarFiltros($data, $filtros);
-                $filename = "Reporte_Filtrado_" . $filename;
-            }
-            break;
-        case 'admins':
-            $data = $reportGenerator->getAdmins();
-            $filename = "Lista_Administradores.xls";
-            
-            // Aplicar filtros si es exportación filtrada
-            if (!empty($filtros)) {
-                $data = aplicarFiltros($data, $filtros);
-                $filename = "Lista_Administradores_Filtrado.xls";
-            }
-            break;
-        case 'trabajadores':
-            $data = $reportGenerator->getEmployees();
-            $filename = "Lista_Trabajadores.xls";
-            
-            // Aplicar filtros si es exportación filtrada
-            if (!empty($filtros)) {
-                $data = aplicarFiltros($data, $filtros);
-                $filename = "Lista_Trabajadores_Filtrado.xls";
-            }
-            break;
-        case 'history':
-            $historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
-            $historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
-            $historialTabla = $_GET['historial_tabla'] ?? '';
-            $historialAccion = $_GET['historial_accion'] ?? '';
-            $historialCreadoPor = $_GET['historial_creado_por'] ?? '';
-            $data = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor);
-            $filename = "Historial_Cambios_{$historialFechaInicio}_al_{$historialFechaFin}.xls";
-            break;
-        default:
-            exit;
-    }
-    
-    // Generar Excel con formato profesional
-    header("Content-Type: application/vnd.ms-excel");
-    header("Content-Disposition: attachment; filename=\"$filename\"");
-    
-    echo "<html>";
-    echo "<head>";
-    echo "<meta charset='UTF-8'>";
-    echo "<style>";
-    echo "table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }";
-    echo "th { background-color: #8A1538; color: white; font-weight: bold; padding: 8px; border: 1px solid #ddd; text-align: center; }";
-    echo "td { padding: 8px; border: 1px solid #ddd; }";
-    echo ".header-info { background-color: #f2f2f2; padding: 10px; margin-bottom: 20px; border: 1px solid #ddd; }";
-    echo ".university-name { font-size: 18px; font-weight: bold; color: #8A1538; text-align: center; margin-bottom: 10px; }";
-    echo ".report-title { font-size: 16px; font-weight: bold; text-align: center; margin-bottom: 10px; }";
-    echo ".report-info { font-size: 12px; margin-bottom: 5px; }";
-    echo ".total-row { background-color: #e8f5e9; font-weight: bold; }";
-    echo ".total-area-row { background-color: #e3f2fd; font-weight: bold; }";
-    echo ".total-general-row { background-color: #fff8e1; font-weight: bold; }";
-    echo ".footer { margin-top: 20px; font-size: 10px; color: #666; text-align: center; }";
-    echo "</style>";
-    echo "</head>";
-    echo "<body>";
-    
-    // Encabezado profesional
-    echo "<div class='header-info'>";
-    echo "<div class='university-name'>UNIVERSIDAD ROOSEVELT</div>";
-    echo "<div class='report-title'>SISTEMA DE CONTROL DE ASISTENCIA</div>";
-    echo "<div class='report-info'>Fecha de exportación: " . date('d/m/Y H:i:s') . "</div>";
-    echo "<div class='report-info'>Exportado por: " . htmlspecialchars($_SESSION['admin_username']) . "</div>";
-    
-    // Información de filtros aplicados
-    if (!empty($filtros)) {
-        echo "<div class='report-info' style='color: #8A1538; font-weight: bold;'>FILTROS APLICADOS:</div>";
-        foreach ($filtros as $campo => $valor) {
-            if (!empty($valor)) {
-                $nombreCampo = ucfirst(str_replace('_', ' ', $campo));
-                echo "<div class='report-info'>- $nombreCampo: " . htmlspecialchars($valor) . "</div>";
-            }
-        }
-    }
-    
-    switch ($section) {
-        case 'dashboard':
-            echo "<div class='report-info'>Período: $fechaInicio al $fechaFin</div>";
-            switch ($reportType) {
-                case 'tardiness':
-                    echo "<div class='report-info'>Reporte: Tardanzas</div>";
-                    break;
-                case 'permission':
-                    echo "<div class='report-info'>Reporte: Permisos</div>";
-                    break;
-                case 'no_asistencia':
-                    echo "<div class='report-info'>Reporte: Empleados Sin Asistencia</div>";
-                    break;
-                case 'areas':
-                    echo "<div class='report-info'>Reporte: Por Áreas</div>";
-                    break;
-                default:
-                    echo "<div class='report-info'>Reporte: Diario de Asistencia</div>";
-                    break;
-            }
-            break;
-        case 'admins':
-            echo "<div class='report-info'>Reporte: Lista de Administradores</div>";
-            break;
-        case 'trabajadores':
-            echo "<div class='report-info'>Reporte: Lista de Trabajadores</div>";
-            break;
-        case 'history':
-            echo "<div class='report-info'>Reporte: Historial de Cambios</div>";
-            echo "<div class='report-info'>Período: $historialFechaInicio al $historialFechaFin</div>";
-            break;
-    }
-    echo "</div>";
-    
-    switch ($section) {
-        case 'dashboard':
-            switch ($reportType) {
-                case 'tardiness':
-                    echo "<table>";
-                    echo "<tr><th colspan='9' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE TARDANZAS</th></tr>";
-                    echo "<tr>
-                            <th>#</th>
-                            <th>DNI</th>
-                            <th>APELLIDOS</th>
-                            <th>NOMBRES</th>
-                            <th>ÁREA</th>
-                            <th>CARGO</th>
-                            <th>FECHA</th>
-                            <th>TARDANZA MAÑANA</th>
-                            <th>TARDANZA TARDE</th>
-                          </tr>";
-                    
-                    $contador = 1;
-                    $totalTardanzaManana = 0;
-                    $totalTardanzaTarde = 0;
-                    
-                    foreach ($data as $row) {
-                        if (isset($row['es_total']) && $row['es_total']) {
-                            continue;
-                        }
-                        
-                        $tardanzasCombinadas = [];
-                        foreach ($row['tardanzas_manana'] as $tardanza) {
-                            $tardanzasCombinadas[$tardanza['fecha']] = [
-                                'manana' => $tardanza,
-                                'tarde' => null
-                            ];
-                        }
-                        foreach ($row['tardanzas_tarde'] as $tardanza) {
-                            if (isset($tardanzasCombinadas[$tardanza['fecha']])) {
-                                $tardanzasCombinadas[$tardanza['fecha']]['tarde'] = $tardanza;
-                            } else {
-                                $tardanzasCombinadas[$tardanza['fecha']] = [
-                                    'manana' => null,
-                                    'tarde' => $tardanza
-                                ];
-                            }
-                        }
-                        
-                        foreach ($tardanzasCombinadas as $fecha => $tardanzas) {
-                            echo "<tr>";
-                            echo "<td>" . $contador++ . "</td>";
-                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
-                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
-                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                            echo "<td>" . $fecha . "</td>";
-                            echo "<td>" . ($tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-') . "</td>";
-                            echo "<td>" . ($tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-') . "</td>";
-                            echo "</tr>";
-                            
-                            if ($tardanzas['manana']) {
-                                $totalTardanzaManana += $tardanzas['manana']['minutos_tardanza'];
-                            }
-                            if ($tardanzas['tarde']) {
-                                $totalTardanzaTarde += $tardanzas['tarde']['minutos_tardanza'];
-                            }
-                        }
-                    }
-                    
-                    // Fila de totales
-                    echo "<tr class='total-general-row'>";
-                    echo "<td colspan='7' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
-                    echo "<td style='font-weight: bold;'>" . minutesToTime($totalTardanzaManana) . "</td>";
-                    echo "<td style='font-weight: bold;'>" . minutesToTime($totalTardanzaTarde) . "</td>";
-                    echo "</tr>";
-                    
-                    echo "</table>";
-                    break;
-                    
-                case 'no_asistencia':
-                    echo "<table>";
-                    echo "<tr><th colspan='9' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE EMPLEADOS SIN ASISTENCIA</th></tr>";
-                    echo "<tr>
-                            <th>#</th>
-                            <th>DNI</th>
-                            <th>APELLIDOS</th>
-                            <th>NOMBRES</th>
-                            <th>ÁREA</th>
-                            <th>CARGO</th>
-                            <th>TURNO</th>
-                            <th>TOTAL FALTAS</th>
-                          </tr>";
-                    
-                    $contador = 1;
-                    $totalFaltasManana = 0;
-                    $totalFaltasTarde = 0;
-                    
-                    foreach ($data as $row) {
-                        if (isset($row['es_total']) && $row['es_total']) {
-                            continue;
-                        }
-                        
-                        if (!empty($row['faltas_manana'])) {
-                            echo "<tr>";
-                            echo "<td>" . $contador++ . "</td>";
-                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
-                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
-                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                            echo "<td>MAÑANA</td>";
-                            echo "<td>" . $row['total_faltas_manana'] . "</td>";
-                            echo "</tr>";
-                            
-                            $totalFaltasManana += $row['total_faltas_manana'];
-                        }
-                        
-                        if (!empty($row['faltas_tarde'])) {
-                            echo "<tr>";
-                            echo "<td>" . $contador++ . "</td>";
-                            echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
-                            echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
-                            echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                            echo "<td>TARDE</td>";
-                            echo "<td>" . $row['total_faltas_tarde'] . "</td>";
-                            echo "</tr>";
-                            
-                            $totalFaltasTarde += $row['total_faltas_tarde'];
-                        }
-                    }
-                    
-                    // Fila de totales
-                    echo "<tr class='total-general-row'>";
-                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
-                    echo "<td style='font-weight: bold;'>MAÑANA</td>";
-                    echo "<td style='font-weight: bold;'>$totalFaltasManana</td>";
-                    echo "</tr>";
-                    echo "<tr class='total-general-row'>";
-                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'></td>";
-                    echo "<td style='font-weight: bold;'>TARDE</td>";
-                    echo "<td style='font-weight: bold;'>$totalFaltasTarde</td>";
-                    echo "</tr>";
-                    echo "<tr class='total-general-row'>";
-                    echo "<td colspan='6' style='text-align: right; font-weight: bold;'></td>";
-                    echo "<td style='font-weight: bold;'>TOTAL GENERAL</td>";
-                    echo "<td style='font-weight: bold;'>" . ($totalFaltasManana + $totalFaltasTarde) . "</td>";
-                    echo "</tr>";
-                    
-                    echo "</table>";
-                    break;
-                    
-                case 'permission':
-                    echo "<table>";
-                    echo "<tr><th colspan='14' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DE PERMISOS</th></tr>";
-                    echo "<tr>
-                            <th>#</th>
-                            <th>DNI</th>
-                            <th>APELLIDOS</th>
-                            <th>NOMBRES</th>
-                            <th>ÁREA</th>
-                            <th>CARGO</th>
-                            <th>FECHA</th>
-                            <th>TIPO PERMISO</th>
-                            <th>MOTIVO</th>
-                            <th>SALIDA</th>
-                            <th>RETORNO</th>
-                            <th>REGISTRO</th>
-                            <th>REGISTRADO POR</th>
-                          </tr>";
-                    
-                    $contador = 1;
-                    $totalPermisos = 0;
-                    $tiposPermiso = [];
-                    
-                    foreach ($data as $row) {
-                        echo "<tr>";
-                        echo "<td>" . $contador++ . "</td>";
-                        echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
-                        echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
-                        echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                        echo "<td>" . $row['fecha_permiso'] . "</td>";
-                        echo "<td>" . htmlspecialchars($row['tipo_permiso']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['motivo']) . "</td>";
-                        echo "<td>" . $row['hora_salida'] . "</td>";
-                        echo "<td>" . $row['hora_retorno'] . "</td>";
-                        echo "<td>" . $row['hora_registro'] . "</td>";
-                        echo "<td>" . htmlspecialchars($row['registrado_por']) . "</td>";
-                        echo "</tr>";
-                        
-                        $totalPermisos++;
-                        $tipo = $row['tipo_permiso'];
-                        if (!isset($tiposPermiso[$tipo])) {
-                            $tiposPermiso[$tipo] = 0;
-                        }
-                        $tiposPermiso[$tipo]++;
-                    }
-                    
-                    // Fila de totales
-                    echo "<tr class='total-general-row'>";
-                    echo "<td colspan='7' style='text-align: right; font-weight: bold;'>TOTALES:</td>";
-                    echo "<td colspan='6' style='font-weight: bold;'>";
-                    foreach ($tiposPermiso as $tipo => $cantidad) {
-                        echo "$tipo: $cantidad | ";
-                    }
-                    echo "TOTAL: $totalPermisos";
-                    echo "</td>";
-                    echo "</tr>";
-                    
-                    echo "</table>";
-                    break;
-                    
-                case 'areas':
-                    echo "<table>";
-                    echo "<tr><th colspan='8' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE POR ÁREAS</th></tr>";
-                    echo "<tr>
-                            <th>ÁREA</th>
-                            <th>CARGO</th>
-                            <th>EMPLEADOS</th>
-                            <th>DÍAS</th>
-                            <th>ASISTENCIAS</th>
-                            <th>PERMISOS</th>
-                            <th>FALTAS</th>
-                            <th>% ASISTENCIA</th>
-                          </tr>";
-                    
-                    foreach ($data as $row) {
-                        $class = '';
-                        if (isset($row['es_total_area']) && $row['es_total_area']) {
-                            $class = 'total-area-row';
-                        } elseif ($row['area'] === 'TOTAL GENERAL') {
-                            $class = 'total-general-row';
-                        }
-                        
-                        echo "<tr class='$class'>";
-                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                        echo "<td>" . $row['empleados'] . "</td>";
-                        echo "<td>" . $row['dias_totales'] . "</td>";
-                        echo "<td>" . $row['asistencias'] . "</td>";
-                        echo "<td>" . $row['permisos'] . "</td>";
-                        echo "<td>" . $row['faltas'] . "</td>";
-                        echo "<td>" . $row['porcentaje_asistencia'] . "%</td>";
-                        echo "</tr>";
-                    }
-                    
-                    echo "</table>";
-                    break;
-                    
-                default: // daily
-                    echo "<table>";
-                    echo "<tr><th colspan='14' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>REPORTE DIARIO DE ASISTENCIA</th></tr>";
-                    echo "<tr>
-                            <th>#</th>
-                            <th>FECHA</th>
-                            <th>DNI</th>
-                            <th>APELLIDOS</th>
-                            <th>NOMBRES</th>
-                            <th>ÁREA</th>
-                            <th>CARGO</th>
-                            <th>ENT. MAÑANA</th>
-                            <th>SAL. MAÑANA</th>
-                            <th>ENT. TARDE</th>
-                            <th>SAL. TARDE</th>
-                            <th>REGISTROS</th>
-                            <th>REGISTRADO POR</th>
-                          </tr>";
-                    
-                    $contador = 1;
-                    foreach ($data as $row) {
-                        echo "<tr>";
-                        echo "<td>" . $contador++ . "</td>";
-                        echo "<td>" . $row['fecha'] . "</td>";
-                        echo "<td>" . htmlspecialchars($row['dni']) . "</td>";
-                        echo "<td>" . htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) . "</td>";
-                        echo "<td>" . htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['area']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['puesto']) . "</td>";
-                        
-                        echo "<td>" . (!empty($row['registros_entrada_manana']) ? min($row['registros_entrada_manana']) : '-') . "</td>";
-                        echo "<td>" . (!empty($row['registros_salida_manana']) ? min($row['registros_salida_manana']) : '-') . "</td>";
-                        echo "<td>" . (!empty($row['registros_entrada_tarde']) ? min($row['registros_entrada_tarde']) : '-') . "</td>";
-                        echo "<td>" . (!empty($row['registros_salida_tarde']) ? min($row['registros_salida_tarde']) : '-') . "</td>";
-                        
-                        echo "<td>";
-                        if (!empty($row['todos_registros'])) {
-                            foreach ($row['todos_registros'] as $registro) {
-                                echo $registro . "<br>";
-                            }
-                        } else {
-                            echo "-";
-                        }
-                        echo "</td>";
-                        
-                        echo "<td>";
-                        if (!empty($row['todos_registradores'])) {
-                            foreach ($row['todos_registradores'] as $registrador) {
-                                echo htmlspecialchars($registrador) . "<br>";
-                            }
-                        } else {
-                            echo "-";
-                        }
-                        echo "</td>";
-                        echo "</tr>";
-                    }
-                    echo "</table>";
-                    break;
-            }
-            break;
-            
-        case 'admins':
-            echo "<table>";
-            echo "<tr><th colspan='12' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>LISTA DE ADMINISTRADORES</th></tr>";
-            echo "<tr>
-                    <th>#</th>
-                    <th>APELLIDOS</th>
-                    <th>NOMBRES</th>
-                    <th>ÁREA</th>
-                    <th>CARGO</th>
-                    <th>USUARIO</th>
-                    <th>ROL</th>
-                    <th>ESTADO</th>
-                    <th>FECHA CREACIÓN</th>
-                    <th>HORA</th>
-                    <th>CREADO POR</th>
-                    <th>ACCIONES</th>
-                  </tr>";
-            
-            $contador = 1;
-            foreach ($data as $admin) {
-                echo "<tr>";
-                echo "<td>" . $contador++ . "</td>";
-                echo "<td>" . htmlspecialchars($admin['apellidos']) . "</td>";
-                echo "<td>" . htmlspecialchars($admin['nombres']) . "</td>";
-                echo "<td>" . htmlspecialchars($admin['area']) . "</td>";
-                echo "<td>" . htmlspecialchars($admin['cargo']) . "</td>";
-                echo "<td>" . htmlspecialchars($admin['usuario']) . "</td>";
-                echo "<td>" . ($admin['rol'] === 'admin' ? 'Administrador' : ($admin['rol'] === 'supervisor' ? 'Supervisor' : 'Espectador')) . "</td>";
-                echo "<td>" . ($admin['estado'] === 'activo' ? 'Activo' : 'Inactivo') . "</td>";
-                echo "<td>" . date('d/m/Y', strtotime($admin['fecha_creacion'])) . "</td>";
-                echo "<td>" . date('H:i:s', strtotime($admin['fecha_creacion'])) . "</td>";
-                echo "<td>" . htmlspecialchars($admin['creado_por_nombre']) . "</td>";
-                echo "<td>";
-                if ($isSuperAdmin && $admin['id'] != $_SESSION['admin_id']) {
-                    echo "<button type='button' class='btn btn-secondary btn-sm' onclick='openEditAdminModal(" . $admin['id'] . ")'>";
-                    echo "<i class='fas fa-edit'></i> Editar";
-                    echo "</button>";
-                    echo "<form method='post' style='display: inline; margin-left: 5px;'>";
-                    echo "<input type='hidden' name='admin_id' value='" . $admin['id'] . "'>";
-                    echo "<input type='hidden' name='nuevo_estado' value='" . ($admin['estado'] === 'activo' ? 'inactivo' : 'activo') . "'>";
-                    echo "<button type='submit' name='cambiar_estado_admin' class='btn btn-" . ($admin['estado'] === 'activo' ? 'warning' : 'success') . " btn-sm'>";
-                    echo "<i class='fas fa-" . ($admin['estado'] === 'activo' ? 'pause' : 'play') . "'></i>";
-                    echo $admin['estado'] === 'activo' ? ' Desactivar' : ' Activar';
-                    echo "</button>";
-                    echo "</form>";
-                }
-                echo "</td>";
-                echo "</tr>";
-            }
-            echo "</table>";
-            break;
-            
-        case 'trabajadores':
-            echo "<table>";
-            echo "<tr><th colspan='10' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>LISTA DE TRABAJADORES</th></tr>";
-            echo "<tr>
-                    <th>#</th>
-                    <th>FOTO</th>
-                    <th>DNI</th>
-                    <th>APELLIDOS</th>
-                    <th>NOMBRES</th>
-                    <th>ÁREA</th>
-                    <th>CARGO</th>
-                    <th>ESTADO</th>
-                    <th>CREADO POR</th>
-                    <th>ACCIONES</th>
-                  </tr>";
-            
-            $contador = 1;
-            foreach ($data as $empleado) {
-                echo "<tr>";
-                echo "<td>" . $contador++ . "</td>";
-                echo "<td>";
-                if (!empty($empleado['foto']) && file_exists(FOTO_DIR . $empleado['foto'])) {
-                    echo "<img src='" . FOTO_DIR . $empleado['foto'] . "' style='width: 50px; height: 50px; border-radius: 50%; object-fit: cover;'>";
-                } else {
-                    echo "<div style='width: 50px; height: 50px; border-radius: 50%; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center;'>";
-                    echo "<i class='fas fa-user' style='color: #666;'></i>";
-                    echo "</div>";
-                }
-                echo "</td>";
-                echo "<td>" . htmlspecialchars($empleado['dni']) . "</td>";
-                echo "<td>" . htmlspecialchars($empleado['apellidos']) . "</td>";
-                echo "<td>" . htmlspecialchars($empleado['nombres']) . "</td>";
-                echo "<td>" . htmlspecialchars($empleado['area']) . "</td>";
-                echo "<td>" . htmlspecialchars($empleado['puesto']) . "</td>";
-                echo "<td>";
-                echo "<span class='badge " . ($empleado['estado'] === 'activo' ? 'badge-success' : 'badge-danger') . "'>";
-                echo $empleado['estado'] === 'activo' ? 'Activo' : 'Inactivo';
-                echo "</span>";
-                echo "</td>";
-                echo "<td>" . htmlspecialchars($empleado['creado_por_nombre']) . "</td>";
-                echo "<td>";
-                if ($isSuperAdmin || $isSupervisor) {
-                    echo "<button type='button' class='btn btn-secondary btn-sm' onclick='openEditEmpleadoModal(" . $empleado['id'] . ")'>";
-                    echo "<i class='fas fa-edit'></i> Editar";
-                    echo "</button>";
-                    echo "<form method='post' style='display: inline; margin-left: 5px;'>";
-                    echo "<input type='hidden' name='empleado_id' value='" . $empleado['id'] . "'>";
-                    echo "<input type='hidden' name='nuevo_estado' value='" . ($empleado['estado'] === 'activo' ? 'inactivo' : 'activo') . "'>";
-                    echo "<button type='submit' name='cambiar_estado_empleado' class='btn btn-" . ($empleado['estado'] === 'activo' ? 'warning' : 'success') . " btn-sm'>";
-                    echo "<i class='fas fa-" . ($empleado['estado'] === 'activo' ? 'pause' : 'play') . "'></i>";
-                    echo $empleado['estado'] === 'activo' ? ' Desactivar' : ' Activar';
-                    echo "</button>";
-                    echo "</form>";
-                }
-                echo "</td>";
-                echo "</tr>";
-            }
-            echo "</table>";
-            break;
-            
-        case 'history':
-            echo "<table>";
-            echo "<tr><th colspan='11' style='background-color: #8A1538; color: white; text-align: center; font-size: 16px;'>HISTORIAL DE CAMBIOS</th></tr>";
-            echo "<tr>
-                    <th>#</th>
-                    <th>TABLA AFECTADA</th>
-                    <th>USUARIO AFECTADO</th>
-                    <th>ACCION</th>
-                    <th>CAMPO MODIFICADO</th>
-                    <th>VALOR ANTERIOR</th>
-                    <th>VALOR NUEVO</th>
-                    <th>MOTIVO</th>
-                    <th>MODIFICADO POR</th>
-                    <th>FECHA MODIFICACION</th>
-                    <th>HORA MODIFICACION</th>
-                  </tr>";
-            
-            $contador = 1;
-            foreach ($data as $historial) {
-                echo "<tr>";
-                echo "<td>" . $contador++ . "</td>";
-                echo "<td>" . htmlspecialchars($historial['tabla_afectada']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['usuario_afectado']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['accion']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['campo_modificado']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['valor_anterior']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['valor_nuevo']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['motivo']) . "</td>";
-                echo "<td>" . htmlspecialchars($historial['modificado_por_nombre']) . "</td>";
-                echo "<td>" . date('d/m/Y', strtotime($historial['fecha_modificacion'])) . "</td>";
-                echo "<td>" . date('H:i:s', strtotime($historial['fecha_modificacion'])) . "</td>";
-                echo "</tr>";
-            }
-            echo "</table>";
-            break;
-    }
-    
-    // Pie de página
-    echo "<div class='footer'>";
-    echo "Documento generado automáticamente por el Sistema de Control de Asistencia - Universidad Roosevelt<br>";
-    echo "Fecha y hora de generación: " . date('d/m/Y H:i:s');
-    echo "</div>";
-    
-    echo "</body>";
-    echo "</html>";
-    exit;
-}
-
 // Clase para generar reportes
 class ReportGenerator {
     private $pdo;
@@ -1245,16 +654,85 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene lista de empleados/trabajadores
+     * Obtiene lista de empleados/trabajadores con filtros
      */
-    public function getEmployees() {
-        $stmt = $this->pdo->query("
-            SELECT e.id, e.dni, e.nombres, e.apellidos, e.area, e.puesto, e.estado, e.foto, e.tipo_personal, e.inicio_contrato, e.fin_contrato,
-                   COALESCE(ua.usuario, 'SISTEMA') AS creado_por_nombre
-            FROM empleados e 
-            LEFT JOIN usuarios_admin ua ON e.creado_por = ua.id 
-            ORDER BY e.apellidos, e.nombres
-        ");
+    public function getEmployees($filtros = []) {
+        $where = "WHERE 1=1";
+        $params = [];
+        
+        // Aplicar filtros
+        if (!empty($filtros['area'])) {
+            $where .= " AND e.area = ?";
+            $params[] = $filtros['area'];
+        }
+        
+        if (!empty($filtros['cargo'])) {
+            $where .= " AND e.puesto = ?";
+            $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['estado'])) {
+            $where .= " AND e.estado = ?";
+            $params[] = $filtros['estado'];
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
+        
+        $sql = "SELECT e.id, e.dni, e.nombres, e.apellidos, e.area, e.puesto, e.estado, e.foto, e.tipo_personal, e.inicio_contrato, e.fin_contrato,
+                       COALESCE(ua.usuario, 'SISTEMA') AS creado_por_nombre
+                FROM empleados e 
+                LEFT JOIN usuarios_admin ua ON e.creado_por = ua.id 
+                $where
+                ORDER BY e.apellidos, e.nombres";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * Obtiene lista de administradores con filtros
+     */
+    public function getAdministradores($filtros = []) {
+        $where = "WHERE 1=1";
+        $params = [];
+        
+        // Aplicar filtros
+        if (!empty($filtros['rol'])) {
+            $where .= " AND ua.rol = ?";
+            $params[] = $filtros['rol'];
+        }
+        
+        if (!empty($filtros['estado'])) {
+            $where .= " AND ua.estado = ?";
+            $params[] = $filtros['estado'];
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (ua.usuario LIKE ? OR ua.nombres LIKE ? OR ua.apellidos LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
+        
+        $sql = "SELECT ua.id, ua.nombres, ua.apellidos, ua.usuario, ua.rol, ua.estado, ua.fecha_creacion,
+                       COALESCE(uc.usuario, 'SISTEMA') AS creado_por_nombre
+                FROM usuarios_admin ua 
+                LEFT JOIN usuarios_admin uc ON ua.creado_por = uc.id 
+                $where
+                ORDER BY ua.apellidos, ua.nombres";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
     
@@ -1268,10 +746,41 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene reporte diario de asistencia
+     * Obtiene un administrador por ID
      */
-    public function getDailyReport($fechaInicio, $fechaFin) {
+    public function getAdminById($id) {
+        $stmt = $this->pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
+        $stmt->execute([$id]);
+        return $stmt->fetch();
+    }
+    
+    /**
+     * Obtiene reporte diario de asistencia con filtros
+     */
+    public function getDailyReport($fechaInicio, $fechaFin, $filtros = []) {
+        $where = "WHERE r.fecha BETWEEN ? AND ?";
         $params = [$fechaInicio, $fechaFin];
+        
+        // Aplicar filtros
+        if (!empty($filtros['area'])) {
+            $where .= " AND e.area = ?";
+            $params[] = $filtros['area'];
+        }
+        
+        if (!empty($filtros['cargo'])) {
+            $where .= " AND e.puesto = ?";
+            $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
         
         $sql = "SELECT 
                     e.id, e.dni, 
@@ -1287,7 +796,7 @@ class ReportGenerator {
                 FROM empleados e
                 LEFT JOIN registros_asistencia r ON e.id = r.empleado_id
                 LEFT JOIN usuarios_admin ua ON r.registrado_por = ua.id
-                WHERE r.fecha BETWEEN ? AND ?
+                $where
                 ORDER BY r.fecha, e.area, e.apellidos, e.nombres, r.hora";
         
         $stmt = $this->pdo->prepare($sql);
@@ -1347,22 +856,50 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene empleados que no marcaron asistencia en un rango de fechas
+     * Obtiene empleados que no marcaron asistencia en un rango de fechas con filtros
      */
-    public function getEmployeesWithoutAttendance($fechaInicio, $fechaFin) {
+    public function getEmployeesWithoutAttendance($fechaInicio, $fechaFin, $filtros = []) {
+        $where = "WHERE e.estado = 'activo'";
+        $params = [];
+        
+        // Aplicar filtros
+        if (!empty($filtros['area'])) {
+            $where .= " AND e.area = ?";
+            $params[] = $filtros['area'];
+        }
+        
+        if (!empty($filtros['cargo'])) {
+            $where .= " AND e.puesto = ?";
+            $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['turno'])) {
+            // Filtro por turno - se aplicará después en el procesamiento
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
+        
         // Obtener todos los empleados activos
-        $sql = "SELECT 
+        $sqlEmpleados = "SELECT 
                     e.id, e.dni, 
                     CONCAT(e.apellidos, ' ', e.nombres) AS nombre_completo,
                     e.area, e.puesto, e.tipo_personal,
                     e.entrada_manana, e.salida_manana, e.entrada_tarde, e.salida_tarde
                 FROM empleados e
-                WHERE e.estado = 'activo'
+                $where
                 ORDER BY e.area, e.apellidos, e.nombres";
         
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute();
-        $empleados = $stmt->fetchAll();
+        $stmtEmpleados = $this->pdo->prepare($sqlEmpleados);
+        $stmtEmpleados->execute($params);
+        $empleados = $stmtEmpleados->fetchAll();
         
         // Obtener días con asistencia por empleado
         $sqlAsistencias = "SELECT empleado_id, DATE(fecha) as fecha, TIME(hora) as hora
@@ -1474,7 +1011,19 @@ class ReportGenerator {
             }
         }
         
-        // Agregar fila de totales (solo 1 fila)
+        // Aplicar filtro por turno si está presente
+        if (!empty($filtros['turno'])) {
+            $result = array_filter($result, function($row) use ($filtros) {
+                if ($filtros['turno'] === 'MAÑANA') {
+                    return !empty($row['faltas_manana']);
+                } elseif ($filtros['turno'] === 'TARDE') {
+                    return !empty($row['faltas_tarde']);
+                }
+                return true;
+            });
+        }
+        
+        // Agregar fila de totales
         $result[] = [
             'es_total' => true,
             'total_faltas_manana' => $totalFaltasManana,
@@ -1486,10 +1035,34 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene reporte de permisos
+     * Obtiene reporte de permisos con filtros
      */
-    public function getPermissionReport($fechaInicio, $fechaFin) {
+    public function getPermissionReport($fechaInicio, $fechaFin, $filtros = []) {
+        $where = "WHERE p.fecha_permiso BETWEEN ? AND ?";
         $params = [$fechaInicio, $fechaFin];
+        
+        // Aplicar filtros
+        if (!empty($filtros['area'])) {
+            $where .= " AND e.area = ?";
+            $params[] = $filtros['area'];
+        }
+        
+        if (!empty($filtros['cargo'])) {
+            $where .= " AND e.puesto = ?";
+            $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ? OR p.tipo_permiso LIKE ? OR p.motivo LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
         
         $sql = "SELECT 
                     p.id, p.fecha_permiso, p.tipo_permiso, p.motivo, 
@@ -1504,7 +1077,7 @@ class ReportGenerator {
                 FROM permisos p
                 JOIN empleados e ON p.empleado_id = e.id
                 LEFT JOIN usuarios_admin ua ON p.registrado_por = ua.id
-                WHERE p.fecha_permiso BETWEEN ? AND ?
+                $where
                 ORDER BY p.fecha_permiso, e.area, e.apellidos, e.nombres";
         
         $stmt = $this->pdo->prepare($sql);
@@ -1515,15 +1088,39 @@ class ReportGenerator {
     /**
      * Obtiene totales por tipo de permiso
      */
-    public function getPermissionTotals($fechaInicio, $fechaFin) {
+    public function getPermissionTotals($fechaInicio, $fechaFin, $filtros = []) {
+        $where = "WHERE p.fecha_permiso BETWEEN ? AND ?";
         $params = [$fechaInicio, $fechaFin];
+        
+        // Aplicar filtros
+        if (!empty($filtros['area'])) {
+            $where .= " AND e.area = ?";
+            $params[] = $filtros['area'];
+        }
+        
+        if (!empty($filtros['cargo'])) {
+            $where .= " AND e.puesto = ?";
+            $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ? OR p.tipo_permiso LIKE ? OR p.motivo LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
         
         $sql = "SELECT 
                     p.tipo_permiso, 
                     COUNT(*) as total
                 FROM permisos p
                 JOIN empleados e ON p.empleado_id = e.id
-                WHERE p.fecha_permiso BETWEEN ? AND ?
+                $where
                 GROUP BY p.tipo_permiso
                 ORDER BY total DESC";
         
@@ -1542,13 +1139,13 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene reporte de tardanzas
+     * Obtiene reporte de tardanzas - CORREGIDO: Solo cuenta tardanzas después de la hora de entrada + tolerancia
      */
-    public function getTardinessReport($fechaInicio, $fechaFin) {
+    public function getTardinessReport($fechaInicio, $fechaFin, $filtros = []) {
         $minutosTolerancia = getConfig('minutos_tolerancia', $this->pdo) ?: 5;
         
         // Obtener el reporte diario para calcular tardanzas
-        $dailyReport = $this->getDailyReport($fechaInicio, $fechaFin);
+        $dailyReport = $this->getDailyReport($fechaInicio, $fechaFin, $filtros);
         
         $result = [];
         $totalTardanzaManana = 0;
@@ -1574,63 +1171,69 @@ class ReportGenerator {
                 'minutos_tolerancia' => $minutosTolerancia
             ];
             
-            // Procesar tardanzas de la mañana
+            // Procesar tardanzas de la mañana - CORREGIDO: Solo cuenta después de la hora de entrada + tolerancia
             if (!empty($empleado['registros_entrada_manana']) && $empleado['entrada_manana']) {
                 $primerRegistroManana = min($empleado['registros_entrada_manana']);
                 $horaEntradaManana = new DateTime($empleado['entrada_manana']);
                 $horaRegistroManana = new DateTime($primerRegistroManana);
                 
+                // Calcular diferencia en minutos
                 $diferencia = $horaEntradaManana->diff($horaRegistroManana);
-                $minutosTardanza = ($diferencia->h * 60) + $diferencia->i;
+                $minutosDiferencia = ($diferencia->h * 60) + $diferencia->i;
                 
-                // Aplicar tolerancia
-                $minutosTardanza = max(0, $minutosTardanza - $minutosTolerancia);
-                
-                if ($minutosTardanza > 0) {
-                    $horas = floor($minutosTardanza / 60);
-                    $minutos = $minutosTardanza % 60;
+                // CORRECCIÓN: Solo contar como tardanza si el registro es DESPUÉS de la hora de entrada + tolerancia
+                if ($horaRegistroManana > $horaEntradaManana) {
+                    $minutosTardanza = max(0, $minutosDiferencia - $minutosTolerancia);
                     
-                    $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
-                    
-                    $tardanzas['tardanzas_manana'][] = [
-                        'fecha' => $empleado['fecha'],
-                        'hora_entrada' => $empleado['entrada_manana'],
-                        'hora_marcada' => $primerRegistroManana,
-                        'tardanza' => $tardanzaFormato,
-                        'minutos_tardanza' => $minutosTardanza
-                    ];
-                    
-                    $totalTardanzaManana += $minutosTardanza;
+                    if ($minutosTardanza > 0) {
+                        $horas = floor($minutosTardanza / 60);
+                        $minutos = $minutosTardanza % 60;
+                        
+                        $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
+                        
+                        $tardanzas['tardanzas_manana'][] = [
+                            'fecha' => $empleado['fecha'],
+                            'hora_entrada' => $empleado['entrada_manana'],
+                            'hora_marcada' => $primerRegistroManana,
+                            'tardanza' => $tardanzaFormato,
+                            'minutos_tardanza' => $minutosTardanza
+                        ];
+                        
+                        $totalTardanzaManana += $minutosTardanza;
+                    }
                 }
             }
             
-            // Procesar tardanzas de la tarde
+            // Procesar tardanzas de la tarde - CORREGIDO: Solo cuenta después de la hora de entrada + tolerancia
             if (!empty($empleado['registros_entrada_tarde']) && $empleado['entrada_tarde']) {
                 $primerRegistroTarde = min($empleado['registros_entrada_tarde']);
                 $horaEntradaTarde = new DateTime($empleado['entrada_tarde']);
                 $horaRegistroTarde = new DateTime($primerRegistroTarde);
                 
+                // Calcular diferencia en minutos
                 $diferencia = $horaEntradaTarde->diff($horaRegistroTarde);
-                $minutosTardanza = ($diferencia->h * 60) + $diferencia->i;
+                $minutosDiferencia = ($diferencia->h * 60) + $diferencia->i;
                 
-                // Aplicar tolerancia
-                $minutosTardanza = max(0, $minutosTardanza - $minutosTolerancia);
-                
-                if ($minutosTardanza > 0) {
-                    $horas = floor($minutosTardanza / 60);
-                    $minutos = $minutosTardanza % 60;
+                // CORRECCIÓN: Solo contar como tardanza si el registro es DESPUÉS de la hora de entrada + tolerancia
+                if ($horaRegistroTarde > $horaEntradaTarde) {
+                    $minutosTardanza = max(0, $minutosDiferencia - $minutosTolerancia);
                     
-                    $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
-                    
-                    $tardanzas['tardanzas_tarde'][] = [
-                        'fecha' => $empleado['fecha'],
-                        'hora_entrada' => $empleado['entrada_tarde'],
-                        'hora_marcada' => $primerRegistroTarde,
-                        'tardanza' => $tardanzaFormato,
-                        'minutos_tardanza' => $minutosTardanza
-                    ];
-                    
-                    $totalTardanzaTarde += $minutosTardanza;
+                    if ($minutosTardanza > 0) {
+                        $horas = floor($minutosTardanza / 60);
+                        $minutos = $minutosTardanza % 60;
+                        
+                        $tardanzaFormato = sprintf("%02d:%02d", $horas, $minutos);
+                        
+                        $tardanzas['tardanzas_tarde'][] = [
+                            'fecha' => $empleado['fecha'],
+                            'hora_entrada' => $empleado['entrada_tarde'],
+                            'hora_marcada' => $primerRegistroTarde,
+                            'tardanza' => $tardanzaFormato,
+                            'minutos_tardanza' => $minutosTardanza
+                        ];
+                        
+                        $totalTardanzaTarde += $minutosTardanza;
+                    }
                 }
             }
             
@@ -1664,215 +1267,11 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene reporte por áreas - CORREGIDO
+     * Obtiene historial de cambios - CORREGIDO: Hora correcta
      */
-    public function getAreaReport($fechaInicio, $fechaFin, $tipoVista = 'detallado') {
-        // Obtener todos los empleados activos
-        $sqlEmpleados = "SELECT id, area, puesto, tipo_personal, estado 
-                        FROM empleados 
-                        WHERE estado = 'activo' 
-                        ORDER BY area, puesto";
-        $stmtEmpleados = $this->pdo->prepare($sqlEmpleados);
-        $stmtEmpleados->execute();
-        $empleados = $stmtEmpleados->fetchAll();
-        
-        // Obtener total de días en el rango
-        $start = new DateTime($fechaInicio);
-        $end = new DateTime($fechaFin);
-        $diasTotales = $end->diff($start)->days + 1;
-        
-        // Obtener asistencias por empleado
-        $sqlAsistencias = "SELECT e.id, COUNT(DISTINCT DATE(r.fecha)) as asistencias
-                          FROM empleados e
-                          LEFT JOIN registros_asistencia r ON e.id = r.empleado_id AND r.fecha BETWEEN ? AND ?
-                          WHERE e.estado = 'activo'
-                          GROUP BY e.id";
-        $stmtAsist = $this->pdo->prepare($sqlAsistencias);
-        $stmtAsist->execute([$fechaInicio, $fechaFin]);
-        $asistencias = $stmtAsist->fetchAll();
-        
-        // Obtener permisos por empleado
-        $sqlPermisos = "SELECT e.id, COUNT(DISTINCT p.fecha_permiso) as permisos
-                       FROM empleados e
-                       LEFT JOIN permisos p ON e.id = p.empleado_id AND p.fecha_permiso BETWEEN ? AND ?
-                       WHERE e.estado = 'activo'
-                       GROUP BY e.id";
-        $stmtPerm = $this->pdo->prepare($sqlPermisos);
-        $stmtPerm->execute([$fechaInicio, $fechaFin]);
-        $permisos = $stmtPerm->fetchAll();
-        
-        // Organizar datos por área y cargo
-        $areaData = [];
-        $totalGeneral = [
-            'area' => 'TOTAL GENERAL',
-            'puesto' => '',
-            'empleados' => 0,
-            'dias_totales' => 0,
-            'asistencias' => 0,
-            'permisos' => 0,
-            'faltas' => 0,
-            'porcentaje_asistencia' => 0
-        ];
-        
-        // Crear estructura de datos por área y cargo
-        foreach ($empleados as $empleado) {
-            $area = $empleado['area'];
-            $puesto = $empleado['puesto'];
-            $key = $area . '_' . $puesto;
-            
-            if (!isset($areaData[$key])) {
-                $areaData[$key] = [
-                    'area' => $area,
-                    'puesto' => $puesto,
-                    'empleados' => 0,
-                    'dias_totales' => 0,
-                    'asistencias' => 0,
-                    'permisos' => 0,
-                    'faltas' => 0,
-                    'porcentaje_asistencia' => 0
-                ];
-            }
-            
-            $areaData[$key]['empleados']++;
-            $areaData[$key]['dias_totales'] += $diasTotales;
-            $totalGeneral['empleados']++;
-            $totalGeneral['dias_totales'] += $diasTotales;
-        }
-        
-        // Procesar asistencias
-        $asistenciasPorEmpleado = [];
-        foreach ($asistencias as $asist) {
-            $asistenciasPorEmpleado[$asist['id']] = $asist['asistencias'];
-        }
-        
-        // Procesar permisos
-        $permisosPorEmpleado = [];
-        foreach ($permisos as $perm) {
-            $permisosPorEmpleado[$perm['id']] = $perm['permisos'];
-        }
-        
-        // Calcular asistencias y permisos por área y cargo
-        foreach ($empleados as $empleado) {
-            $area = $empleado['area'];
-            $puesto = $empleado['puesto'];
-            $key = $area . '_' . $puesto;
-            
-            $asistenciasEmpleado = $asistenciasPorEmpleado[$empleado['id']] ?? 0;
-            $permisosEmpleado = $permisosPorEmpleado[$empleado['id']] ?? 0;
-            
-            $areaData[$key]['asistencias'] += $asistenciasEmpleado;
-            $areaData[$key]['permisos'] += $permisosEmpleado;
-            $totalGeneral['asistencias'] += $asistenciasEmpleado;
-            $totalGeneral['permisos'] += $permisosEmpleado;
-        }
-        
-        // Calcular faltas y porcentajes
-        foreach ($areaData as $key => &$data) {
-            $data['faltas'] = $data['dias_totales'] - $data['asistencias'] - $data['permisos'];
-            $data['porcentaje_asistencia'] = $data['dias_totales'] > 0 ? 
-                round(($data['asistencias'] / $data['dias_totales']) * 100, 2) : 0;
-        }
-        
-        $totalGeneral['faltas'] = $totalGeneral['dias_totales'] - $totalGeneral['asistencias'] - $totalGeneral['permisos'];
-        $totalGeneral['porcentaje_asistencia'] = $totalGeneral['dias_totales'] > 0 ? 
-            round(($totalGeneral['asistencias'] / $totalGeneral['dias_totales']) * 100, 2) : 0;
-        
-        // Agregar totales por área
-        $areaTotals = [];
-        foreach ($areaData as $key => $data) {
-            $area = $data['area'];
-            if (!isset($areaTotals[$area])) {
-                $areaTotals[$area] = [
-                    'area' => $area,
-                    'puesto' => 'TOTAL ' . $area,
-                    'empleados' => 0,
-                    'dias_totales' => 0,
-                    'asistencias' => 0,
-                    'permisos' => 0,
-                    'faltas' => 0,
-                    'porcentaje_asistencia' => 0,
-                    'es_total_area' => true
-                ];
-            }
-            
-            $areaTotals[$area]['empleados'] += $data['empleados'];
-            $areaTotals[$area]['dias_totales'] += $data['dias_totales'];
-            $areaTotals[$area]['asistencias'] += $data['asistencias'];
-            $areaTotals[$area]['permisos'] += $data['permisos'];
-            $areaTotals[$area]['faltas'] += $data['faltas'];
-        }
-        
-        // Calcular porcentajes para totales por área
-        foreach ($areaTotals as &$totalArea) {
-            $totalArea['porcentaje_asistencia'] = $totalArea['dias_totales'] > 0 ? 
-                round(($totalArea['asistencias'] / $totalArea['dias_totales']) * 100, 2) : 0;
-        }
-        
-        // Convertir a array y agregar totales
-        $result = array_values($areaData);
-        
-        // Insertar totales por área después de cada área
-        $finalResult = [];
-        $currentArea = '';
-        
-        foreach ($result as $row) {
-            if ($row['area'] !== $currentArea) {
-                if ($currentArea !== '') {
-                    // Agregar total del área anterior
-                    $finalResult[] = $areaTotals[$currentArea];
-                }
-                $currentArea = $row['area'];
-            }
-            $finalResult[] = $row;
-        }
-        
-        // Agregar el último total de área
-        if ($currentArea !== '') {
-            $finalResult[] = $areaTotals[$currentArea];
-        }
-        
-        // Agregar fila de total general
-        $finalResult[] = $totalGeneral;
-        
-        // Filtrar según tipo de vista
-        if ($tipoVista === 'total') {
-            $finalResult = array_filter($finalResult, function($row) {
-                return isset($row['es_total_area']) || (isset($row['area']) && $row['area'] === 'TOTAL GENERAL');
-            });
-        }
-        
-        return $finalResult;
-    }
-    
-    /**
-     * Obtiene lista de administradores con información de creador
-     */
-    public function getAdmins() {
-        $stmt = $this->pdo->query("
-            SELECT ua.*, 
-                   COALESCE(creador.usuario, 'SISTEMA') AS creado_por_nombre
-            FROM usuarios_admin ua 
-            LEFT JOIN usuarios_admin creador ON ua.creado_por = creador.id 
-            ORDER BY ua.rol, ua.apellidos, ua.nombres
-        ");
-        return $stmt->fetchAll();
-    }
-    
-    /**
-     * Obtiene un administrador por ID
-     */
-    public function getAdminById($id) {
-        $stmt = $this->pdo->prepare("SELECT * FROM usuarios_admin WHERE id = ?");
-        $stmt->execute([$id]);
-        return $stmt->fetch();
-    }
-    
-    /**
-     * Obtiene historial de cambios
-     */
-    public function getHistorial($fechaInicio = null, $fechaFin = null, $tabla = null, $accion = null, $creadoPor = null) {
-        $params = [];
+    public function getHistorial($fechaInicio = null, $fechaFin = null, $tabla = null, $accion = null, $creadoPor = null, $filtros = []) {
         $where = "WHERE 1=1";
+        $params = [];
         
         if ($fechaInicio) {
             $where .= " AND DATE(h.fecha_modificacion) >= ?";
@@ -1899,6 +1298,20 @@ class ReportGenerator {
             $params[] = "%$creadoPor%";
         }
         
+        // Aplicar filtros de búsqueda
+        if (!empty($filtros['busqueda'])) {
+            $where .= " AND (h.tabla_afectada LIKE ? OR h.usuario_afectado LIKE ? OR h.accion LIKE ? OR h.campo_modificado LIKE ? OR h.valor_anterior LIKE ? OR h.valor_nuevo LIKE ? OR h.motivo LIKE ? OR ua.usuario LIKE ?)";
+            $searchTerm = "%{$filtros['busqueda']}%";
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+            $params[] = $searchTerm;
+        }
+        
         $sql = "SELECT h.*, ua.usuario AS modificado_por_nombre
                 FROM historial_cambios h
                 LEFT JOIN usuarios_admin ua ON h.modificado_por = ua.id
@@ -1919,7 +1332,7 @@ class ReportGenerator {
     }
     
     /**
-     * Obtiene lista de cargos por área
+     * Obtiene lista de cargos por área - CORREGIDO: Función mejorada
      */
     public function getPositionsByArea($area) {
         global $CARGOS_POR_AREA;
@@ -1973,8 +1386,9 @@ function minutesToTime($minutes) {
 // Instanciar el generador de reportes
 $reportGenerator = new ReportGenerator($pdo);
 
-// Determinar qué sección mostrar
-$section = $_GET['section'] ?? 'dashboard';
+// Determinar qué sección mostrar - AHORA TODO ES DASHBOARD
+$section = 'dashboard';
+$reportType = $_GET['report_type'] ?? 'daily';
 
 // Configurar fechas por defecto para reportes - SIEMPRE FECHA ACTUAL
 $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
@@ -1983,84 +1397,81 @@ $fechaFin = $_GET['fecha_fin'] ?? date('Y-m-d');
 // Obtener minutos de tolerancia
 $minutosTolerancia = getConfig('minutos_tolerancia', $pdo) ?: 5;
 
-// Generar el reporte correspondiente si estamos en dashboard
-if ($section === 'dashboard') {
-    $reportType = $_GET['report_type'] ?? 'daily';
-    $tipoVista = $_GET['tipo_vista'] ?? 'detallado';
-    
-    switch ($reportType) {
-        case 'tardiness':
-            $reportData = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin);
-            $reportTitle = "Reporte de Tardanzas";
-            break;
-            
-        case 'permission':
-            $reportData = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin);
-            $permissionTotals = $reportGenerator->getPermissionTotals($fechaInicio, $fechaFin);
-            $reportTitle = "Reporte de Permisos";
-            break;
-            
-        case 'no_asistencia':
-            $reportData = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin);
-            $reportTitle = "Empleados Sin Asistencia";
-            break;
-            
-        case 'areas':
-            $reportData = $reportGenerator->getAreaReport($fechaInicio, $fechaFin, $tipoVista);
-            $reportTitle = "Reporte por Áreas";
-            break;
-            
-        default: // daily
-            $reportData = $reportGenerator->getDailyReport($fechaInicio, $fechaFin);
-            $reportTitle = "Reporte Diario de Asistencia";
-            break;
-    }
-    
-    // Configurar paginación para reportes
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-    $itemsPerPage = 20;
-    $totalItems = count($reportData);
-    $totalPages = ceil($totalItems / $itemsPerPage);
-    $offset = ($currentPage - 1) * $itemsPerPage;
-    $paginatedData = array_slice($reportData, $offset, $itemsPerPage);
+// Obtener filtros actuales - AHORA SE APLICAN EN EL SERVIDOR
+$filtros = [];
+$searchTerm = $_GET['search_term'] ?? '';
+$filterArea = $_GET['filter_area'] ?? '';
+$filterCargo = $_GET['filter_cargo'] ?? '';
+$filterEstado = $_GET['filter_estado'] ?? '';
+$filterRol = $_GET['filter_rol'] ?? '';
+$filterTurno = $_GET['filter_turno'] ?? '';
+
+if ($searchTerm) $filtros['busqueda'] = $searchTerm;
+if ($filterArea) $filtros['area'] = $filterArea;
+if ($filterCargo) $filtros['cargo'] = $filterCargo;
+if ($filterEstado) $filtros['estado'] = $filterEstado;
+if ($filterRol) $filtros['rol'] = $filterRol;
+if ($filterTurno) $filtros['turno'] = $filterTurno;
+
+// Inicializar variables para evitar warnings
+$allData = [];
+$permissionTotals = [];
+$historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
+$historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
+$historialTabla = $_GET['historial_tabla'] ?? '';
+$historialAccion = $_GET['historial_accion'] ?? '';
+$historialCreadoPor = $_GET['historial_creado_por'] ?? '';
+
+switch ($reportType) {
+    case 'tardiness':
+        $allData = $reportGenerator->getTardinessReport($fechaInicio, $fechaFin, $filtros);
+        $reportTitle = "Reporte de Tardanzas";
+        break;
+        
+    case 'permission':
+        $allData = $reportGenerator->getPermissionReport($fechaInicio, $fechaFin, $filtros);
+        $permissionTotals = $reportGenerator->getPermissionTotals($fechaInicio, $fechaFin, $filtros);
+        $reportTitle = "Reporte de Permisos";
+        break;
+        
+    case 'no_asistencia':
+        $allData = $reportGenerator->getEmployeesWithoutAttendance($fechaInicio, $fechaFin, $filtros);
+        $reportTitle = "Empleados Sin Asistencia";
+        break;
+        
+    case 'trabajadores':
+        $allData = $reportGenerator->getEmployees($filtros);
+        $reportTitle = "Lista de Trabajadores";
+        break;
+        
+    case 'administradores':
+        $allData = $reportGenerator->getAdministradores($filtros);
+        $reportTitle = "Lista de Administradores";
+        break;
+        
+    case 'history':
+        $allData = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor, $filtros);
+        $reportTitle = "Historial de Cambios";
+        break;
+        
+    case 'config':
+        $reportTitle = "Configuración del Sistema";
+        break;
+        
+    default: // daily
+        $allData = $reportGenerator->getDailyReport($fechaInicio, $fechaFin, $filtros);
+        $reportTitle = "Reporte Diario de Asistencia";
+        break;
 }
 
-// Obtener datos para otras secciones
-if ($section === 'admins') {
-    $adminsData = $reportGenerator->getAdmins();
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-    $itemsPerPage = 20;
-    $totalItems = count($adminsData);
-    $totalPages = ceil($totalItems / $itemsPerPage);
-    $offset = ($currentPage - 1) * $itemsPerPage;
-    $paginatedAdmins = array_slice($adminsData, $offset, $itemsPerPage);
-}
-
-if ($section === 'trabajadores') {
-    $employeesData = $reportGenerator->getEmployees();
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-    $itemsPerPage = 20;
-    $totalItems = count($employeesData);
-    $totalPages = ceil($totalItems / $itemsPerPage);
-    $offset = ($currentPage - 1) * $itemsPerPage;
-    $paginatedEmployees = array_slice($employeesData, $offset, $itemsPerPage);
-}
-
-if ($section === 'history') {
-    $historialFechaInicio = $_GET['historial_fecha_inicio'] ?? date('Y-m-01');
-    $historialFechaFin = $_GET['historial_fecha_fin'] ?? date('Y-m-d');
-    $historialTabla = $_GET['historial_tabla'] ?? '';
-    $historialAccion = $_GET['historial_accion'] ?? '';
-    $historialCreadoPor = $_GET['historial_creado_por'] ?? '';
-    
-    $historialData = $reportGenerator->getHistorial($historialFechaInicio, $historialFechaFin, $historialTabla, $historialAccion, $historialCreadoPor);
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-    $itemsPerPage = 20;
-    $totalItems = count($historialData);
-    $totalPages = ceil($totalItems / $itemsPerPage);
-    $offset = ($currentPage - 1) * $itemsPerPage;
-    $paginatedHistorial = array_slice($historialData, $offset, $itemsPerPage);
-}
+// Configurar paginación para todos los reportes
+$currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+// Para "Sin Asistencia" usar 40 elementos por página, para otros 20
+$itemsPerPage = ($reportType === 'no_asistencia') ? 40 : 20;
+$totalItems = is_array($allData) ? count($allData) : 0;
+$totalPages = $totalItems > 0 ? ceil($totalItems / $itemsPerPage) : 1;
+$offset = ($currentPage - 1) * $itemsPerPage;
+$paginatedData = is_array($allData) ? array_slice($allData, $offset, $itemsPerPage) : [];
 
 // Obtener listas para filtros
 $areas = $reportGenerator->getAreas();
@@ -2085,15 +1496,6 @@ if (isset($_GET['get_permiso'])) {
     exit;
 }
 
-// Obtener datos de administrador para edición
-if (isset($_GET['get_admin'])) {
-    $id = $_GET['get_admin'];
-    $admin = $reportGenerator->getAdminById($id);
-    header('Content-Type: application/json');
-    echo json_encode($admin);
-    exit;
-}
-
 // Obtener datos de empleado para edición
 if (isset($_GET['get_empleado'])) {
     $id = $_GET['get_empleado'];
@@ -2103,7 +1505,16 @@ if (isset($_GET['get_empleado'])) {
     exit;
 }
 
-// Obtener cargos por área (AJAX)
+// Obtener datos de administrador para edición
+if (isset($_GET['get_admin'])) {
+    $id = $_GET['get_admin'];
+    $admin = $reportGenerator->getAdminById($id);
+    header('Content-Type: application/json');
+    echo json_encode($admin);
+    exit;
+}
+
+// Obtener cargos por área (AJAX) - CORREGIDO: Función mejorada
 if (isset($_GET['get_cargos_by_area'])) {
     $area = $_GET['area'] ?? '';
     $cargos = $reportGenerator->getPositionsByArea($area);
@@ -2118,7 +1529,7 @@ if (isset($_GET['get_cargos_by_area'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panel de Administración - Sistema de Asistencia</title>
+    <title>Panel de Administración</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css">
@@ -2515,6 +1926,11 @@ if (isset($_GET['get_cargos_by_area'])) {
             background: var(--light);
             color: var(--dark);
             border: 1px solid #dee2e6;
+        }
+        
+        .badge-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
         }
         
         .pagination {
@@ -2917,25 +2333,6 @@ if (isset($_GET['get_cargos_by_area'])) {
             gap: 0.5rem;
         }
         
-        /* Nuevos estilos para formulario horizontal de administradores */
-        .admin-form-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-        
-        .admin-form-container .form-group:nth-child(odd) {
-            grid-column: 1;
-        }
-        
-        .admin-form-container .form-group:nth-child(even) {
-            grid-column: 2;
-        }
-        
-        .admin-form-container .form-group:nth-child(7) {
-            grid-column: 1 / -1;
-        }
-        
         @media (max-width: 992px) {
             .sidebar {
                 width: 70px;
@@ -2953,15 +2350,6 @@ if (isset($_GET['get_cargos_by_area'])) {
             
             .main-content {
                 margin-left: 70px;
-            }
-            
-            .admin-form-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .admin-form-container .form-group:nth-child(odd),
-            .admin-form-container .form-group:nth-child(even) {
-                grid-column: 1;
             }
             
             .empleado-form-container {
@@ -3039,47 +2427,41 @@ if (isset($_GET['get_cargos_by_area'])) {
             <h3><i class="fas fa-user-shield"></i> <span>Admin</span></h3>
         </div>
         <div class="sidebar-menu">
-            <a href="?section=dashboard&report_type=daily&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && (!isset($_GET['report_type']) || $_GET['report_type'] === 'daily') ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=daily&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $reportType === 'daily' ? 'active' : '' ?>">
                 <i class="fas fa-calendar-day"></i> <span>Diario</span>
             </a>
-            <a href="?section=dashboard&report_type=no_asistencia&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'no_asistencia' ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=no_asistencia&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $reportType === 'no_asistencia' ? 'active' : '' ?>">
                 <i class="fas fa-user-times"></i> <span>Sin Asistencia</span>
             </a>
-            <a href="?section=dashboard&report_type=tardiness&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'tardiness' ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=tardiness&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $reportType === 'tardiness' ? 'active' : '' ?>">
                 <i class="fas fa-clock"></i> <span>Tardanzas</span>
             </a>
-            <a href="?section=dashboard&report_type=permission&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'permission' ? 'active' : '' ?>">
+            <a href="?section=dashboard&report_type=permission&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $reportType === 'permission' ? 'active' : '' ?>">
                 <i class="fas fa-file-signature"></i> <span>Permisos</span>
             </a>
             
-            <?php if (!$isEspectador): ?>
-                <a href="?section=dashboard&report_type=areas&fecha_inicio=<?= date('Y-m-d') ?>&fecha_fin=<?= date('Y-m-d') ?>" class="menu-item <?= $section === 'dashboard' && isset($_GET['report_type']) && $_GET['report_type'] === 'areas' ? 'active' : '' ?>">
-                    <i class="fas fa-chart-bar"></i> <span>Por Áreas</span>
+            <?php if ($isSuperAdmin || $isSupervisor): ?>
+                <a href="?section=dashboard&report_type=trabajadores" class="menu-item <?= $reportType === 'trabajadores' ? 'active' : '' ?>">
+                    <i class="fas fa-users"></i> <span>Trabajadores</span>
                 </a>
-                
-                <?php if ($isSuperAdmin || $isSupervisor): ?>
-                    <a href="?section=trabajadores" class="menu-item <?= $section === 'trabajadores' ? 'active' : '' ?>">
-                        <i class="fas fa-users"></i> <span>Trabajadores</span>
-                    </a>
-                <?php endif; ?>
-                
-                <?php if ($isSuperAdmin || $isSupervisor): ?>
-                    <a href="?section=history" class="menu-item <?= $section === 'history' ? 'active' : '' ?>">
-                        <i class="fas fa-history"></i> <span>Historial</span>
-                    </a>
-                <?php endif; ?>
-                
-                <?php if ($isSuperAdmin): ?>
-                    <a href="?section=admins" class="menu-item <?= $section === 'admins' ? 'active' : '' ?>">
-                        <i class="fas fa-users-cog"></i> <span>Administradores</span>
-                    </a>
-                <?php endif; ?>
-                
-                <?php if ($isSuperAdmin): ?>
-                    <a href="?section=config" class="menu-item <?= $section === 'config' ? 'active' : '' ?>">
-                        <i class="fas fa-cog"></i> <span>Configuración</span>
-                    </a>
-                <?php endif; ?>
+            <?php endif; ?>
+            
+            <?php if ($isSuperAdmin): ?>
+                <a href="?section=dashboard&report_type=administradores" class="menu-item <?= $reportType === 'administradores' ? 'active' : '' ?>">
+                    <i class="fas fa-user-cog"></i> <span>Administradores</span>
+                </a>
+            <?php endif; ?>
+            
+            <?php if ($isSuperAdmin || $isSupervisor): ?>
+                <a href="?section=dashboard&report_type=history" class="menu-item <?= $reportType === 'history' ? 'active' : '' ?>">
+                    <i class="fas fa-history"></i> <span>Historial</span>
+                </a>
+            <?php endif; ?>
+            
+            <?php if ($isSuperAdmin): ?>
+                <a href="?section=dashboard&report_type=config" class="menu-item <?= $reportType === 'config' ? 'active' : '' ?>">
+                    <i class="fas fa-cog"></i> <span>Configuración</span>
+                </a>
             <?php endif; ?>
         </div>
     </div>
@@ -3088,21 +2470,11 @@ if (isset($_GET['get_cargos_by_area'])) {
     <div class="main-content">
         <div class="header">
             <h1>
-                <?php if ($section === 'dashboard'): ?>
-                    <i class="fas fa-clipboard-list"></i> <?= $reportTitle ?>
-                <?php elseif ($section === 'admins'): ?>
-                    <i class="fas fa-users-cog"></i> Administradores
-                <?php elseif ($section === 'trabajadores'): ?>
-                    <i class="fas fa-users"></i> Trabajadores
-                <?php elseif ($section === 'config'): ?>
-                    <i class="fas fa-cog"></i> Configuración
-                <?php elseif ($section === 'history'): ?>
-                    <i class="fas fa-history"></i> Historial de Cambios
-                <?php endif; ?>
+                <i class="fas fa-clipboard-list"></i> <?= $reportTitle ?>
             </h1>
             <div class="user-info">
                 <span>Bienvenido, <?= htmlspecialchars($_SESSION['admin_username']) ?> 
-                (<?= $_SESSION['admin_role'] === 'admin' ? 'Administrador' : ($_SESSION['admin_role'] === 'supervisor' ? 'Supervisor' : 'Espectador') ?>)</span>
+                (<?= $_SESSION['admin_role'] === 'admin' ? 'Administrador' : 'Supervisor' ?>)</span>
                 <a href="index.php" class="btn-logout"><i class="fas fa-sign-out-alt"></i> Salir</a>
             </div>
         </div>
@@ -3121,97 +2493,202 @@ if (isset($_GET['get_cargos_by_area'])) {
             <?php unset($_SESSION['error_message']); ?>
         <?php endif; ?>
         
-        <?php if ($section === 'dashboard'): ?>
-            <!-- Filtros para reportes -->
-            <div class="filters-container">
+        <!-- Action Buttons según el tipo de reporte -->
+        <div class="action-buttons">
+            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'daily'): ?>
+                <button type="button" class="btn btn-success" onclick="openManualAttendanceModal()">
+                    <i class="fas fa-plus"></i> Asistencia
+                </button>
+            <?php endif; ?>
+            
+            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'permission'): ?>
+                <button type="button" class="btn btn-info" onclick="openManualPermissionModal()">
+                    <i class="fas fa-plus"></i> Permiso
+                </button>
+            <?php endif; ?>
+            
+            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'trabajadores'): ?>
+                <button type="button" class="btn btn-success" onclick="openAddEmpleadoModal()">
+                    <i class="fas fa-plus"></i> Agregar Trabajador
+                </button>
+            <?php endif; ?>
+            
+            <?php if ($isSuperAdmin && $reportType === 'administradores'): ?>
+                <button type="button" class="btn btn-success" onclick="openAddAdminModal()">
+                    <i class="fas fa-plus"></i> Agregar Administrador
+                </button>
+            <?php endif; ?>
+            
+            <!-- BOTÓN DE EXPORTAR EXCEL ELIMINADO -->
+            
+            <!-- Botón para limpiar filtros -->
+            <a href="?section=dashboard&report_type=<?= $reportType ?>" class="btn btn-light">
+                <i class="fas fa-times"></i> Limpiar
+            </a>
+        </div>
+        
+        <!-- Filtros para todos los reportes -->
+        <?php if ($reportType !== 'config'): ?>
+        <div class="filters-container">
+            <form method="get" id="filtersForm">
+                <input type="hidden" name="section" value="dashboard">
+                <input type="hidden" name="report_type" value="<?= $reportType ?>">
+                
                 <div class="filters-grid">
-                    <div class="filter-group">
+                    <?php if (in_array($reportType, ['daily', 'tardiness', 'permission', 'no_asistencia'])): ?>
                         <div class="form-group">
                             <label for="fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
-                            <input type="date" id="fecha_inicio" class="form-control" value="<?= $fechaInicio ?>">
+                            <input type="date" id="fecha_inicio" name="fecha_inicio" class="form-control" value="<?= $fechaInicio ?>">
                         </div>
                         
                         <div class="form-group">
                             <label for="fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
-                            <input type="date" id="fecha_fin" class="form-control" value="<?= $fechaFin ?>">
+                            <input type="date" id="fecha_fin" name="fecha_fin" class="form-control" value="<?= $fechaFin ?>">
                         </div>
-                    </div>
+                    <?php endif; ?>
                     
-                    <?php if ($reportType === 'areas'): ?>
+                    <?php if ($reportType === 'history'): ?>
                         <div class="form-group">
-                            <label for="tipo_vista"><i class="fas fa-eye"></i> Tipo de Vista</label>
-                            <select id="tipo_vista" class="form-control">
-                                <option value="detallado" <?= $tipoVista === 'detallado' ? 'selected' : '' ?>>Vista Detallada</option>
-                                <option value="total" <?= $tipoVista === 'total' ? 'selected' : '' ?>>Solo Totales</option>
+                            <label for="historial_fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
+                            <input type="date" id="historial_fecha_inicio" name="historial_fecha_inicio" 
+                                   class="form-control" value="<?= $historialFechaInicio ?>">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
+                            <input type="date" id="historial_fecha_fin" name="historial_fecha_fin" 
+                                   class="form-control" value="<?= $historialFechaFin ?>">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_tabla"><i class="fas fa-table"></i> Tabla Afectada</label>
+                            <select id="historial_tabla" name="historial_tabla" class="form-control">
+                                <option value="">Todas las tablas</option>
+                                <option value="empleados" <?= $historialTabla === 'empleados' ? 'selected' : '' ?>>Empleados</option>
+                                <option value="usuarios_admin" <?= $historialTabla === 'usuarios_admin' ? 'selected' : '' ?>>Administradores</option>
+                                <option value="permisos" <?= $historialTabla === 'permisos' ? 'selected' : '' ?>>Permisos</option>
+                                <option value="registros_asistencia" <?= $historialTabla === 'registros_asistencia' ? 'selected' : '' ?>>Asistencias</option>
+                                <option value="configuracion_sistema" <?= $historialTabla === 'configuracion_sistema' ? 'selected' : '' ?>>Configuración</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_accion"><i class="fas fa-bolt"></i> Acción</label>
+                            <select id="historial_accion" name="historial_accion" class="form-control">
+                                <option value="">Todas las acciones</option>
+                                <option value="INSERT" <?= $historialAccion === 'INSERT' ? 'selected' : '' ?>>INSERT</option>
+                                <option value="UPDATE" <?= $historialAccion === 'UPDATE' ? 'selected' : '' ?>>UPDATE</option>
+                                <option value="DELETE" <?= $historialAccion === 'DELETE' ? 'selected' : '' ?>>DELETE</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="historial_creado_por"><i class="fas fa-user"></i> Modificado Por</label>
+                            <input type="text" id="historial_creado_por" name="historial_creado_por" 
+                                   class="form-control" value="<?= htmlspecialchars($historialCreadoPor) ?>" 
+                                   placeholder="Buscar por usuario...">
+                        </div>
+                    <?php endif; ?>
+                    
+                    <!-- Filtros comunes para Área, Cargo y Búsqueda -->
+                    <?php if (in_array($reportType, ['daily', 'tardiness', 'permission', 'no_asistencia', 'trabajadores'])): ?>
+                        <div class="form-group">
+                            <label for="filter_area"><i class="fas fa-building"></i> Área</label>
+                            <select id="filter_area" name="filter_area" class="form-control">
+                                <option value="">Todas las áreas</option>
+                                <?php foreach ($areas as $area): ?>
+                                    <option value="<?= htmlspecialchars($area) ?>" <?= $filterArea === $area ? 'selected' : '' ?>><?= htmlspecialchars($area) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="filter_cargo"><i class="fas fa-briefcase"></i> Cargo</label>
+                            <select id="filter_cargo" name="filter_cargo" class="form-control">
+                                <option value="">Todos los cargos</option>
+                                <!-- Los cargos se cargarán dinámicamente según el área seleccionada -->
                             </select>
                         </div>
                     <?php endif; ?>
                     
-                    <div class="filter-group">
-                        <!-- Nuevos filtros para Área, Cargo y Tipo Personal -->
+                    <!-- Filtro especial para Turno en Sin Asistencia -->
+                    <?php if ($reportType === 'no_asistencia'): ?>
                         <div class="form-group">
-                            <label for="filter_area_report"><i class="fas fa-building"></i> Área</label>
-                            <select id="filter_area_report" class="form-control" onchange="updateCargoFilter('report')">
-                                <option value="">Todas las áreas</option>
-                                <?php foreach ($areas as $area): ?>
-                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
-                                <?php endforeach; ?>
+                            <label for="filter_turno"><i class="fas fa-clock"></i> Turno</label>
+                            <select id="filter_turno" name="filter_turno" class="form-control">
+                                <option value="">Todos los turnos</option>
+                                <option value="MAÑANA" <?= $filterTurno === 'MAÑANA' ? 'selected' : '' ?>>Mañana</option>
+                                <option value="TARDE" <?= $filterTurno === 'TARDE' ? 'selected' : '' ?>>Tarde</option>
                             </select>
                         </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_cargo_report"><i class="fas fa-briefcase"></i> Cargo</label>
-                            <select id="filter_cargo_report" class="form-control">
-                                <option value="">Todos los cargos</option>
-                                <?php foreach ($positions as $position): ?>
-                                    <option value="<?= htmlspecialchars($position) ?>"><?= htmlspecialchars($position) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
+                    <?php endif; ?>
                     
-                    <div class="filter-group">
+                    <?php if (in_array($reportType, ['trabajadores', 'administradores'])): ?>
                         <div class="form-group">
-                            <label for="search_input"><i class="fas fa-search"></i> Buscar</label>
-                            <input type="text" id="search_input" class="form-control" placeholder="Buscar en la tabla...">
+                            <label for="filter_estado"><i class="fas fa-circle"></i> Estado</label>
+                            <select id="filter_estado" name="filter_estado" class="form-control">
+                                <option value="">Todos los estados</option>
+                                <option value="activo" <?= $filterEstado === 'activo' ? 'selected' : '' ?>>Activo</option>
+                                <option value="inactivo" <?= $filterEstado === 'inactivo' ? 'selected' : '' ?>>Inactivo</option>
+                            </select>
                         </div>
-                        
-                        <div class="filter-actions">
-                            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'daily'): ?>
-                                <button type="button" class="btn btn-success" onclick="openManualAttendanceModal()">
-                                    <i class="fas fa-plus"></i> Asistencia
-                                </button>
-                            <?php endif; ?>
-                            
-                            <?php if (($isSuperAdmin || $isSupervisor) && $reportType === 'permission'): ?>
-                                <button type="button" class="btn btn-info" onclick="openManualPermissionModal()">
-                                    <i class="fas fa-plus"></i> Permiso
-                                </button>
-                            <?php endif; ?>
-                            
-                            <!-- Botón Exportar Excel - SOLO para no espectadores -->
-                            <?php if (!$isEspectador): ?>
-                                <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
-                                    <i class="fas fa-filter"></i> Exportar Filtrado
-                                </button>
-                            <?php endif; ?>
+                    <?php endif; ?>
+                    
+                    <?php if ($reportType === 'administradores'): ?>
+                        <div class="form-group">
+                            <label for="filter_rol"><i class="fas fa-user-tag"></i> Rol</label>
+                            <select id="filter_rol" name="filter_rol" class="form-control">
+                                <option value="">Todos los roles</option>
+                                <option value="admin" <?= $filterRol === 'admin' ? 'selected' : '' ?>>Administrador</option>
+                                <option value="supervisor" <?= $filterRol === 'supervisor' ? 'selected' : '' ?>>Supervisor</option>
+                            </select>
                         </div>
+                    <?php endif; ?>
+                    
+                    <div class="form-group">
+                        <label for="search_term"><i class="fas fa-search"></i> Buscar</label>
+                        <input type="text" id="search_term" name="search_term" class="form-control" placeholder="Buscar en todos los datos..." value="<?= htmlspecialchars($searchTerm) ?>">
                     </div>
                 </div>
-            </div>
+            </form>
+        </div>
+        <?php endif; ?>
 
+        <!-- Contenido específico para cada tipo de reporte -->
+        <?php if ($reportType === 'config'): ?>
+            <!-- Sección de Configuración -->
+            <div class="card">
+                <div class="card-title"><i class="fas fa-cog"></i> Configuración del Sistema</div>
+                <form method="post" action="">
+                    <div style="max-width: 500px; margin: 0 auto;">
+                        <div class="form-group">
+                            <label for="minutos_tolerancia">Minutos de Tolerancia para Tardanzas</label>
+                            <input type="number" id="minutos_tolerancia" name="minutos_tolerancia" 
+                                   class="form-control" value="<?= $minutosTolerancia ?>" 
+                                   min="0" max="60" required>
+                            <small class="text-muted">Establece los minutos de tolerancia antes de considerar una tardanza (0-60 minutos)</small>
+                        </div>
+                        <div style="text-align: center; margin-top: 2rem;">
+                            <button type="submit" name="actualizar_configuracion" class="btn btn-success">
+                                <i class="fas fa-save"></i> Guardar Configuración
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        <?php else: ?>
+            <!-- Vista de tabla para todos los demás reportes -->
             <div class="card report-card">
                 <div class="report-header">
-                    <h2 class="card-title" style="color: white; border: none; margin: 0;"><i class="fas fa-table"></i> Resultados</h2>
+                    <h2 class="card-title" style="color: white; border: none; margin: 0;"><i class="fas fa-table"></i> Resultados (<span id="total-items"><?= $totalItems ?></span> registros)</h2>
                 </div>
                 
-                <!-- Vista de tabla para reportes -->
                 <div class="table-responsive">
                     <?php if (!empty($paginatedData)): ?>
                         <table class="report-table" id="report-table">
                             <thead>
                                 <tr>
-                                    <?php if ($reportType !== 'areas'): ?>
+                                    <?php if (!in_array($reportType, ['areas'])): ?>
                                         <th style="width: 50px">#</th>
                                     <?php endif; ?>
                                     <?php switch ($reportType): 
@@ -3219,11 +2696,14 @@ if (isset($_GET['get_cargos_by_area'])) {
                                             <th>DNI</th>
                                             <th>APELLIDOS</th>
                                             <th>NOMBRES</th>
-                                            <th>ÁREA</th>
-                                            <th>CARGO</th>
                                             <th>FECHA</th>
+                                            <th>HEM</th>
+                                            <th>HORA MARCADA MAÑANA</th>
                                             <th>TARDANZA MAÑANA</th>
+                                            <th>HET</th>
+                                            <th>HORA MARCADA TARDE</th>
                                             <th>TARDANZA TARDE</th>
+                                            <th></th>
                                             <?php break; ?>
                                             
                                         <?php case 'permission': ?>
@@ -3239,9 +2719,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                                             <th>RETORNO</th>
                                             <th>REGISTRO</th>
                                             <th>REGISTRADO POR</th>
-                                            <?php if (!$isEspectador): ?>
-                                                <th>ACCIONES</th>
-                                            <?php endif; ?>
+                                            <th>ACCIONES</th>
                                             <?php break; ?>
                                             
                                         <?php case 'no_asistencia': ?>
@@ -3252,17 +2730,44 @@ if (isset($_GET['get_cargos_by_area'])) {
                                             <th>CARGO</th>
                                             <th>TURNO</th>
                                             <th>TOTAL FALTAS</th>
+                                            <th>FECHAS</th>
                                             <?php break; ?>
                                             
-                                        <?php case 'areas': ?>
+                                        <?php case 'trabajadores': ?>
+                                            <th>FOTO</th>
+                                            <th>DNI</th>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
                                             <th>ÁREA</th>
                                             <th>CARGO</th>
-                                            <th>EMPLEADOS</th>
-                                            <th>DÍAS</th>
-                                            <th>ASISTENCIAS</th>
-                                            <th>PERMISOS</th>
-                                            <th>FALTAS</th>
-                                            <th>% ASISTENCIA</th>
+                                            <th>ESTADO</th>
+                                            <th>CREADO POR</th>
+                                            <th>ACCIONES</th>
+                                            <?php break; ?>
+                                            
+                                        <?php case 'administradores': ?>
+                                            <th>APELLIDOS</th>
+                                            <th>NOMBRES</th>
+                                            <th>USUARIO</th>
+                                            <th>ROL</th>
+                                            <th>ESTADO</th>
+                                            <th>FECHA CREACIÓN</th>
+                                            <th>HORA</th>
+                                            <th>CREADO POR</th>
+                                            <th>ACCIONES</th>
+                                            <?php break; ?>
+                                            
+                                        <?php case 'history': ?>
+                                            <th>TABLA AFECTADA</th>
+                                            <th>USUARIO AFECTADO</th>
+                                            <th>ACCION</th>
+                                            <th>CAMPO MODIFICADO</th>
+                                            <th>VALOR ANTERIOR</th>
+                                            <th>VALOR NUEVO</th>
+                                            <th>MOTIVO</th>
+                                            <th>MODIFICADO POR</th>
+                                            <th>FECHA MODIFICACION</th>
+                                            <th>HORA MODIFICACION</th>
                                             <?php break; ?>
                                             
                                         <?php default: // daily ?>
@@ -3281,23 +2786,29 @@ if (isset($_GET['get_cargos_by_area'])) {
                                     <?php endswitch; ?>
                                 </tr>
                             </thead>
-                            <tbody>
-                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
+                            <tbody id="table-body">
+                                <?php 
+                                // CORRECCIÓN: Iniciar contador correctamente para cada página
+                                $contador = ($currentPage - 1) * $itemsPerPage + 1;
+                                $showCounter = !in_array($reportType, ['areas']);
+                                ?>
+                                
                                 <?php foreach ($paginatedData as $row): ?>
                                     <?php if (isset($row['es_total']) && $row['es_total']): ?>
-                                        <!-- Fila única de totales para SIN ASISTENCIA -->
+                                        <!-- Fila de totales para SIN ASISTENCIA -->
                                         <?php if ($reportType === 'no_asistencia'): ?>
                                             <tr class="total-general-row">
-                                                <td colspan="6" style="text-align: right; font-weight: bold;">TOTALES:</td>
+                                                <td colspan="<?= $showCounter ? 8 : 7 ?>" style="text-align: right; font-weight: bold;">TOTALES:</td>
                                                 <td style="font-weight: bold;">MAÑANA: <?= $row['total_faltas_manana'] ?></td>
                                                 <td style="font-weight: bold;">TARDE: <?= $row['total_faltas_tarde'] ?></td>
                                                 <td style="font-weight: bold;">TOTAL: <?= $row['total_general'] ?></td>
                                             </tr>
                                         <?php elseif ($reportType === 'tardiness'): ?>
-                                            <!-- Fila única de totales para TARDANZAS -->
+                                            <!-- Fila de totales para TARDANZAS -->
                                             <tr class="total-general-row">
-                                                <td colspan="6" style="text-align: right; font-weight: bold;">TOTALES:</td>
+                                                <td colspan="<?= $showCounter ? 7 : 6 ?>" style="text-align: right; font-weight: bold;">TOTALES:</td>
                                                 <td style="font-weight: bold;"><?= $row['total_tardanza_manana'] ?></td>
+                                                <td colspan="2" style="text-align: right; font-weight: bold;"></td>
                                                 <td style="font-weight: bold;"><?= $row['total_tardanza_tarde'] ?></td>
                                                 <td style="font-weight: bold;">TOTAL: <?= $row['total_tardanza'] ?></td>
                                             </tr>
@@ -3305,11 +2816,9 @@ if (isset($_GET['get_cargos_by_area'])) {
                                         <?php continue; ?>
                                     <?php endif; ?>
                                     
-                                    <tr <?= (isset($row['es_total_area']) ? 'class="total-area-row"' : ($reportType === 'areas' && $row['area'] === 'TOTAL GENERAL' ? 'class="total-general-row"' : '')) ?>
-                                        data-area="<?= htmlspecialchars($row['area'] ?? '') ?>"
-                                        data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>">
+                                    <tr <?= (isset($row['es_total_area']) ? 'class="total-area-row"' : ($reportType === 'areas' && $row['area'] === 'TOTAL GENERAL' ? 'class="total-general-row"' : '')) ?>>
                                         
-                                        <?php if ($reportType !== 'areas'): ?>
+                                        <?php if ($showCounter): ?>
                                             <td style="text-align: center;"><?= $contador++ ?></td>
                                         <?php endif; ?>
                                         
@@ -3343,26 +2852,26 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 $firstRow = true;
                                                 foreach ($tardanzasCombinadas as $fecha => $tardanzas): ?>
                                                     <?php if (!$firstRow): ?>
-                                                        <tr data-area="<?= htmlspecialchars($row['area'] ?? '') ?>" data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>">
-                                                        <td style="text-align: center;"></td>
+                                                        <tr>
+                                                        <?php if ($showCounter): ?>
+                                                            <td style="text-align: center;"></td>
+                                                        <?php endif; ?>
                                                     <?php endif; ?>
                                                     
                                                     <td><?= htmlspecialchars($row['dni']) ?></td>
                                                     <td><?= htmlspecialchars(explode(' ', $row['nombre_completo'])[0]) ?></td>
                                                     <td><?= htmlspecialchars(implode(' ', array_slice(explode(' ', $row['nombre_completo']), 1))) ?></td>
-                                                    <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
-                                                    <td><?= htmlspecialchars($row['puesto']) ?></td>
                                                     <td class="text-center nowrap"><?= $fecha ?></td>
                                                     
                                                     <!-- Datos mañana -->
-                                                    <td class="tardanza-cell text-center">
-                                                        <?= $tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-' ?>
-                                                    </td>
+                                                    <td class="text-center"><?= $tardanzas['manana'] ? $tardanzas['manana']['hora_entrada'] : '-' ?></td>
+                                                    <td class="text-center"><?= $tardanzas['manana'] ? $tardanzas['manana']['hora_marcada'] : '-' ?></td>
+                                                    <td class="tardanza-cell text-center"><?= $tardanzas['manana'] ? $tardanzas['manana']['tardanza'] : '-' ?></td>
                                                     
                                                     <!-- Datos tarde -->
-                                                    <td class="tardanza-cell text-center">
-                                                        <?= $tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-' ?>
-                                                    </td>
+                                                    <td class="text-center"><?= $tardanzas['tarde'] ? $tardanzas['tarde']['hora_entrada'] : '-' ?></td>
+                                                    <td class="text-center"><?= $tardanzas['tarde'] ? $tardanzas['tarde']['hora_marcada'] : '-' ?></td>
+                                                    <td class="tardanza-cell text-center"><?= $tardanzas['tarde'] ? $tardanzas['tarde']['tardanza'] : '-' ?></td>
                                                     </tr>
                                                     <?php $firstRow = false; ?>
                                                 <?php endforeach; ?>
@@ -3381,15 +2890,13 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                 <td class="text-center"><?= $row['hora_retorno'] ?></td>
                                                 <td class="text-center"><?= $row['hora_registro'] ?></td>
                                                 <td class="text-center"><?= htmlspecialchars($row['registrado_por']) ?></td>
-                                                <?php if (!$isEspectador): ?>
-                                                    <td>
-                                                        <?php if ($isSuperAdmin || $isSupervisor): ?>
-                                                            <button type="button" class="btn btn-secondary btn-sm" onclick="openEditPermissionModal(<?= $row['id'] ?>)">
-                                                                <i class="fas fa-edit"></i> Editar
-                                                            </button>
-                                                        <?php endif; ?>
-                                                    </td>
-                                                <?php endif; ?>
+                                                <td>
+                                                    <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                        <button type="button" class="btn btn-secondary btn-sm" onclick="openEditPermissionModal(<?= $row['id'] ?>)">
+                                                            <i class="fas fa-edit"></i> Editar
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </td>
                                                 <?php break; ?>
                                                 
                                             <?php case 'no_asistencia': ?>
@@ -3404,7 +2911,13 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                         <span class="badge badge-warning">MAÑANA</span>
                                                     </td>
                                                     <td class="text-center"><?= $row['total_faltas_manana'] ?></td>
-                                                    </tr><tr data-area="<?= htmlspecialchars($row['area'] ?? '') ?>" data-cargo="<?= htmlspecialchars($row['puesto'] ?? '') ?>"><td style="text-align: center;"><?= $contador++ ?></td>
+                                                    <td><?= implode(', ', array_slice($row['faltas_manana'], 0, 5)) . (count($row['faltas_manana']) > 5 ? '...' : '') ?></td>
+                                                    </tr>
+                                                    <?php if ($showCounter): ?>
+                                                        <tr><td style="text-align: center;"><?= $contador++ ?></td>
+                                                    <?php else: ?>
+                                                        <tr>
+                                                    <?php endif; ?>
                                                 <?php endif; ?>
                                                 
                                                 <?php if (!empty($row['faltas_tarde'])): ?>
@@ -3417,23 +2930,112 @@ if (isset($_GET['get_cargos_by_area'])) {
                                                         <span class="badge badge-info">TARDE</span>
                                                     </td>
                                                     <td class="text-center"><?= $row['total_faltas_tarde'] ?></td>
+                                                    <td><?= implode(', ', array_slice($row['faltas_tarde'], 0, 5)) . (count($row['faltas_tarde']) > 5 ? '...' : '') ?></td>
                                                 <?php endif; ?>
                                                 <?php break; ?>
                                                 
-                                            <?php case 'areas': ?>
+                                            <?php case 'trabajadores': ?>
+                                                <td>
+                                                    <?php if (!empty($row['foto']) && file_exists(FOTO_DIR . $row['foto'])): ?>
+                                                        <img src="<?= FOTO_DIR . $row['foto'] ?>" class="employee-photo" onclick="openImageModal('<?= FOTO_DIR . $row['foto'] ?>')">
+                                                    <?php else: ?>
+                                                        <div style="width: 50px; height: 50px; border-radius: 50%; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center;">
+                                                            <i class="fas fa-user" style="color: #666;"></i>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?= htmlspecialchars($row['dni']) ?></td>
+                                                <td><?= htmlspecialchars($row['apellidos']) ?></td>
+                                                <td><?= htmlspecialchars($row['nombres']) ?></td>
                                                 <td class="area-cell"><?= htmlspecialchars($row['area']) ?></td>
                                                 <td><?= htmlspecialchars($row['puesto']) ?></td>
-                                                <td class="text-center"><?= $row['empleados'] ?></td>
-                                                <td class="text-center"><?= $row['dias_totales'] ?></td>
-                                                <td class="text-center"><?= $row['asistencias'] ?></td>
-                                                <td class="text-center"><?= $row['permisos'] ?></td>
-                                                <td class="text-center"><?= $row['faltas'] ?></td>
-                                                <td class="porcentaje-cell <?= 
-                                                    $row['porcentaje_asistencia'] >= 90 ? 'porcentaje-alto' : 
-                                                    ($row['porcentaje_asistencia'] >= 70 ? 'porcentaje-medio' : 'porcentaje-bajo')
-                                                ?>">
-                                                    <?= $row['porcentaje_asistencia'] ?>%
+                                                <td>
+                                                    <span class="badge <?= $row['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
+                                                        <?= $row['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
+                                                    </span>
                                                 </td>
+                                                <td><?= htmlspecialchars($row['creado_por_nombre']) ?></td>
+                                                <td>
+                                                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                        <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                            <button type='button' class='btn btn-secondary btn-sm' onclick='openEditEmpleadoModal(<?= $row['id'] ?>)'>
+                                                                <i class='fas fa-edit'></i> Editar
+                                                            </button>
+                                                        <?php endif; ?>
+                                                        
+                                                        <?php if ($isSuperAdmin || $isSupervisor): ?>
+                                                            <form method="post" style="display: inline;">
+                                                                <input type="hidden" name="empleado_id" value="<?= $row['id'] ?>">
+                                                                <input type="hidden" name="nuevo_estado" value="<?= $row['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
+                                                                <button type="submit" name="cambiar_estado_empleado" class="btn btn-<?= $row['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
+                                                                    <i class="fas fa-<?= $row['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
+                                                                    <?= $row['estado'] === 'activo' ? ' Desactivar' : ' Activar' ?>
+                                                                </button>
+                                                            </form>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                </td>
+                                                <?php break; ?>
+                                                
+                                            <?php case 'administradores': ?>
+                                                <td><?= htmlspecialchars($row['apellidos']) ?></td>
+                                                <td><?= htmlspecialchars($row['nombres']) ?></td>
+                                                <td><?= htmlspecialchars($row['usuario']) ?></td>
+                                                <td>
+                                                    <span class="badge <?= $row['rol'] === 'admin' ? 'badge-primary' : 'badge-info' ?>">
+                                                        <?= $row['rol'] === 'admin' ? 'Administrador' : 'Supervisor' ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge <?= $row['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
+                                                        <?= $row['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
+                                                    </span>
+                                                </td>
+                                                <td><?= date('d/m/Y', strtotime($row['fecha_creacion'])) ?></td>
+                                                <td><?= date('H:i:s', strtotime($row['fecha_creacion'])) ?></td>
+                                                <td><?= htmlspecialchars($row['creado_por_nombre']) ?></td>
+                                                <td>
+                                                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                        <?php if ($isSuperAdmin): ?>
+                                                            <button type='button' class='btn btn-secondary btn-sm' onclick='openEditAdminModal(<?= $row['id'] ?>)'>
+                                                                <i class='fas fa-edit'></i> Editar
+                                                            </button>
+                                                        <?php endif; ?>
+                                                        
+                                                        <?php if ($isSuperAdmin): ?>
+                                                            <form method="post" style="display: inline;">
+                                                                <input type="hidden" name="admin_id" value="<?= $row['id'] ?>">
+                                                                <input type="hidden" name="nuevo_estado" value="<?= $row['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
+                                                                <button type="submit" name="cambiar_estado_admin" class="btn btn-<?= $row['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
+                                                                    <i class="fas fa-<?= $row['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
+                                                                    <?= $row['estado'] === 'activo' ? ' Desactivar' : ' Activar' ?>
+                                                                </button>
+                                                            </form>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                </td>
+                                                <?php break; ?>
+                                                
+                                            <?php case 'history': ?>
+                                                <td>
+                                                    <span class="badge badge-info"><?= htmlspecialchars($row['tabla_afectada']) ?></span>
+                                                </td>
+                                                <td><?= htmlspecialchars($row['usuario_afectado']) ?></td>
+                                                <td>
+                                                    <span class="badge <?= 
+                                                        $row['accion'] === 'INSERT' ? 'badge-success' : 
+                                                        ($row['accion'] === 'UPDATE' ? 'badge-warning' : 'badge-danger')
+                                                    ?>">
+                                                        <?= htmlspecialchars($row['accion']) ?>
+                                                    </span>
+                                                </td>
+                                                <td><?= htmlspecialchars($row['campo_modificado']) ?></td>
+                                                <td><?= htmlspecialchars($row['valor_anterior']) ?></td>
+                                                <td><?= htmlspecialchars($row['valor_nuevo']) ?></td>
+                                                <td><?= htmlspecialchars($row['motivo']) ?></td>
+                                                <td><?= htmlspecialchars($row['modificado_por_nombre']) ?></td>
+                                                <td><?= date('d/m/Y', strtotime($row['fecha_modificacion'])) ?></td>
+                                                <td><?= date('H:i:s', strtotime($row['fecha_modificacion'])) ?></td>
                                                 <?php break; ?>
                                                 
                                             <?php default: // daily ?>
@@ -3509,7 +3111,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                                 <!-- Fila de totales para permisos -->
                                 <?php if ($reportType === 'permission' && isset($permissionTotals) && !empty($permissionTotals)): ?>
                                     <tr class="total-general-row">
-                                        <td colspan="<?= $isEspectador ? '13' : '14' ?>" style="text-align: center; font-weight: bold;">
+                                        <td colspan="<?= $showCounter ? 14 : 13 ?>" style="text-align: center; font-weight: bold;">
                                             TOTALES POR TIPO DE PERMISO:
                                             <?php 
                                             $totalGeneral = 0;
@@ -3555,489 +3157,6 @@ if (isset($_GET['get_cargos_by_area'])) {
                         <div class="no-data">
                             <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
                             <p>No se encontraron datos</p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-        <?php elseif ($section === 'admins'): ?>
-            <!-- Sección de Administradores -->
-
-            <div class="filters-container">
-                <div class="filters-grid">
-                    <div class="filter-group">
-                        <div class="form-group">
-                            <label for="search_admin"><i class="fas fa-search"></i> Buscar</label>
-                            <input type="text" id="search_admin" class="form-control" placeholder="Buscar administradores...">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_rol_admin"><i class="fas fa-user-tag"></i> Rol</label>
-                            <select id="filter_rol_admin" class="form-control">
-                                <option value="">Todos los roles</option>
-                                <option value="admin">Administrador</option>
-                                <option value="supervisor">Supervisor</option>
-                                <option value="espectador">Espectador</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_estado_admin"><i class="fas fa-circle"></i> Estado</label>
-                            <select id="filter_estado_admin" class="form-control">
-                                <option value="">Todos los estados</option>
-                                <option value="activo">Activo</option>
-                                <option value="inactivo">Inactivo</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="filter-actions">
-                        <?php if ($isSuperAdmin): ?>
-                            <button type="button" class="btn btn-success" onclick="openAddAdminModal()">
-                                <i class="fas fa-plus"></i> Agregar Administrador
-                            </button>
-                        <?php endif; ?>
-                        
-                        <!-- Botón Exportar Excel - SOLO para no espectadores -->
-                        <?php if (!$isEspectador): ?>
-                            <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
-                                <i class="fas fa-filter"></i> Exportar Filtrado
-                            </button>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-title"><i class="fas fa-table"></i> Lista de Administradores</div>
-                <div class="table-responsive">
-                    <?php if (!empty($paginatedAdmins)): ?>
-                        <table id="admins-table">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>APELLIDOS</th>
-                                    <th>NOMBRES</th>
-                                    <th>ÁREA</th>
-                                    <th>CARGO</th>
-                                    <th>USUARIO</th>
-                                    <th>ROL</th>
-                                    <th>ESTADO</th>
-                                    <th>FECHA CREACIÓN</th>
-                                    <th>HORA</th>
-                                    <th>CREADO POR</th>
-                                    <th>ACCIONES</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
-                                <?php foreach ($paginatedAdmins as $admin): ?>
-                                    <tr data-rol="<?= htmlspecialchars($admin['rol']) ?>" data-estado="<?= htmlspecialchars($admin['estado']) ?>">
-                                        <td><?= $contador++ ?></td>
-                                        <td><?= htmlspecialchars($admin['apellidos']) ?></td>
-                                        <td><?= htmlspecialchars($admin['nombres']) ?></td>
-                                        <td><?= htmlspecialchars($admin['area']) ?></td>
-                                        <td><?= htmlspecialchars($admin['cargo']) ?></td>
-                                        <td><?= htmlspecialchars($admin['usuario']) ?></td>
-                                        <td>
-                                            <span class="badge <?= $admin['rol'] === 'admin' ? 'badge-success' : ($admin['rol'] === 'supervisor' ? 'badge-info' : 'badge-secondary') ?>">
-                                                <?= $admin['rol'] === 'admin' ? 'Administrador' : ($admin['rol'] === 'supervisor' ? 'Supervisor' : 'Espectador') ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge <?= $admin['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
-                                                <?= $admin['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
-                                            </span>
-                                        </td>
-                                        <td><?= date('d/m/Y', strtotime($admin['fecha_creacion'])) ?></td>
-                                        <td><?= date('H:i:s', strtotime($admin['fecha_creacion'])) ?></td>
-                                        <td><?= htmlspecialchars($admin['creado_por_nombre']) ?></td>
-                                        <td>
-                                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                                <?php if ($isSuperAdmin && $admin['id'] != $_SESSION['admin_id']): ?>
-                                                    <button type="button" class="btn btn-secondary btn-sm" onclick="openEditAdminModal(<?= $admin['id'] ?>)">
-                                                        <i class="fas fa-edit"></i> Editar
-                                                    </button>
-                                                    <form method="post" style="display: inline;">
-                                                        <input type="hidden" name="admin_id" value="<?= $admin['id'] ?>">
-                                                        <input type="hidden" name="nuevo_estado" value="<?= $admin['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
-                                                        <button type="submit" name="cambiar_estado_admin" class="btn btn-<?= $admin['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
-                                                            <i class="fas fa-<?= $admin['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
-                                                            <?= $admin['estado'] === 'activo' ? 'Desactivar' : 'Activar' ?>
-                                                        </button>
-                                                    </form>
-                                                <?php endif; ?>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-
-                        <!-- Paginación -->
-                        <?php if ($totalPages > 1): ?>
-                        <div class="pagination">
-                            <?php if ($currentPage > 1): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
-                            <?php endif; ?>
-                            
-                            <?php 
-                            $startPage = max(1, $currentPage - 2);
-                            $endPage = min($totalPages, $currentPage + 2);
-                            
-                            for ($i = $startPage; $i <= $endPage; $i++): ?>
-                                <?php if ($i == $currentPage): ?>
-                                    <span class="active"><?= $i ?></span>
-                                <?php else: ?>
-                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
-                                <?php endif; ?>
-                            <?php endfor; ?>
-                            
-                            <?php if ($currentPage < $totalPages): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
-                            <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <div class="no-data">
-                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-                            <p>No se encontraron administradores</p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-        <?php elseif ($section === 'trabajadores'): ?>
-            <!-- Sección de Trabajadores -->
-
-            <div class="filters-container">
-                <div class="filters-grid">
-                    <div class="filter-group">
-                        <div class="form-group">
-                            <label for="search_trabajador"><i class="fas fa-search"></i> Buscar</label>
-                            <input type="text" id="search_trabajador" class="form-control" placeholder="Buscar trabajadores...">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_area_trabajador"><i class="fas fa-building"></i> Área</label>
-                            <select id="filter_area_trabajador" class="form-control" onchange="updateCargoFilter('trabajador')">
-                                <option value="">Todas las áreas</option>
-                                <?php foreach ($areas as $area): ?>
-                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_cargo_trabajador"><i class="fas fa-briefcase"></i> Cargo</label>
-                            <select id="filter_cargo_trabajador" class="form-control">
-                                <option value="">Todos los cargos</option>
-                                <?php foreach ($positions as $position): ?>
-                                    <option value="<?= htmlspecialchars($position) ?>"><?= htmlspecialchars($position) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="filter_estado_trabajador"><i class="fas fa-circle"></i> Estado</label>
-                            <select id="filter_estado_trabajador" class="form-control">
-                                <option value="">Todos los estados</option>
-                                <option value="activo">Activo</option>
-                                <option value="inactivo">Inactivo</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="filter-actions">
-                        <?php if ($isSuperAdmin || $isSupervisor): ?>
-                            <button type="button" class="btn btn-success" onclick="openAddEmpleadoModal()">
-                                <i class="fas fa-plus"></i> Agregar Trabajador
-                            </button>
-                        <?php endif; ?>
-                        
-                        <!-- Botón Exportar Excel - SOLO para no espectadores -->
-                        <?php if (!$isEspectador): ?>
-                            <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
-                                <i class="fas fa-filter"></i> Exportar Filtrado
-                            </button>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-title"><i class="fas fa-table"></i> Lista de Trabajadores</div>
-                <div class="table-responsive">
-                    <?php if (!empty($paginatedEmployees)): ?>
-                        <table id="trabajadores-table">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>FOTO</th>
-                                    <th>DNI</th>
-                                    <th>APELLIDOS</th>
-                                    <th>NOMBRES</th>
-                                    <th>ÁREA</th>
-                                    <th>CARGO</th>
-                                    <th>ESTADO</th>
-                                    <th>CREADO POR</th>
-                                    <th>ACCIONES</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
-                                <?php foreach ($paginatedEmployees as $empleado): ?>
-                                    <tr data-area="<?= htmlspecialchars($empleado['area']) ?>" data-cargo="<?= htmlspecialchars($empleado['puesto']) ?>" data-estado="<?= htmlspecialchars($empleado['estado']) ?>">
-                                        <td><?= $contador++ ?></td>
-                                        <td>
-                                            <?php if (!empty($empleado['foto']) && file_exists(FOTO_DIR . $empleado['foto'])): ?>
-                                                <img src="<?= FOTO_DIR . $empleado['foto'] ?>" class="employee-photo" onclick="openImageModal('<?= FOTO_DIR . $empleado['foto'] ?>')">
-                                            <?php else: ?>
-                                                <div style="width: 50px; height: 50px; border-radius: 50%; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center;">
-                                                    <i class="fas fa-user" style="color: #666;"></i>
-                                                </div>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars($empleado['dni']) ?></td>
-                                        <td><?= htmlspecialchars($empleado['apellidos']) ?></td>
-                                        <td><?= htmlspecialchars($empleado['nombres']) ?></td>
-                                        <td class="area-cell"><?= htmlspecialchars($empleado['area']) ?></td>
-                                        <td><?= htmlspecialchars($empleado['puesto']) ?></td>
-                                        <td>
-                                            <span class="badge <?= $empleado['estado'] === 'activo' ? 'badge-success' : 'badge-danger' ?>">
-                                                <?= $empleado['estado'] === 'activo' ? 'Activo' : 'Inactivo' ?>
-                                            </span>
-                                        </td>
-                                        <td><?= htmlspecialchars($empleado['creado_por_nombre']) ?></td>
-                                        <td>
-                                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                                <?php if ($isSuperAdmin || $isSupervisor): ?>
-                                                    <button type='button' class='btn btn-secondary btn-sm' onclick='openEditEmpleadoModal(<?= $empleado['id'] ?>)'>
-                                                        <i class='fas fa-edit'></i> Editar
-                                                    </button>
-                                                <?php endif; ?>
-                                                
-                                                <?php if ($isSuperAdmin || $isSupervisor): ?>
-                                                    <form method="post" style="display: inline;">
-                                                        <input type="hidden" name="empleado_id" value="<?= $empleado['id'] ?>">
-                                                        <input type="hidden" name="nuevo_estado" value="<?= $empleado['estado'] === 'activo' ? 'inactivo' : 'activo' ?>">
-                                                        <button type="submit" name="cambiar_estado_empleado" class="btn btn-<?= $empleado['estado'] === 'activo' ? 'warning' : 'success' ?> btn-sm">
-                                                            <i class="fas fa-<?= $empleado['estado'] === 'activo' ? 'pause' : 'play' ?>"></i>
-                                                            <?= $empleado['estado'] === 'activo' ? ' Desactivar' : ' Activar' ?>
-                                                        </button>
-                                                    </form>
-                                                <?php endif; ?>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-
-                        <!-- Paginación -->
-                        <?php if ($totalPages > 1): ?>
-                        <div class="pagination">
-                            <?php if ($currentPage > 1): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
-                            <?php endif; ?>
-                            
-                            <?php 
-                            $startPage = max(1, $currentPage - 2);
-                            $endPage = min($totalPages, $currentPage + 2);
-                            
-                            for ($i = $startPage; $i <= $endPage; $i++): ?>
-                                <?php if ($i == $currentPage): ?>
-                                    <span class="active"><?= $i ?></span>
-                                <?php else: ?>
-                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
-                                <?php endif; ?>
-                            <?php endfor; ?>
-                            
-                            <?php if ($currentPage < $totalPages): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
-                            <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <div class="no-data">
-                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-                            <p>No se encontraron trabajadores</p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-        <?php elseif ($section === 'config'): ?>
-            <!-- Sección de Configuración -->
-            <div class="card">
-                <div class="card-title"><i class="fas fa-cog"></i> Configuración del Sistema</div>
-                <form method="post" action="">
-                    <div style="max-width: 500px; margin: 0 auto;">
-                        <div class="form-group">
-                            <label for="minutos_tolerancia">Minutos de Tolerancia para Tardanzas</label>
-                            <input type="number" id="minutos_tolerancia" name="minutos_tolerancia" 
-                                   class="form-control" value="<?= $minutosTolerancia ?>" 
-                                   min="0" max="60" required>
-                            <small class="text-muted">Establece los minutos de tolerancia antes de considerar una tardanza (0-60 minutos)</small>
-                        </div>
-                        <div style="text-align: center; margin-top: 2rem;">
-                            <button type="submit" name="actualizar_configuracion" class="btn btn-success">
-                                <i class="fas fa-save"></i> Guardar Configuración
-                            </button>
-                        </div>
-                    </div>
-                </form>
-            </div>
-
-        <?php elseif ($section === 'history'): ?>
-            <!-- Sección de Historial -->
-            <div class="filters-container">
-                <div class="filters-grid">
-                    <div class="filter-group">
-                        <div class="form-group">
-                            <label for="historial_fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
-                            <input type="date" id="historial_fecha_inicio" name="historial_fecha_inicio" 
-                                   class="form-control" value="<?= $historialFechaInicio ?>">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="historial_fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
-                            <input type="date" id="historial_fecha_fin" name="historial_fecha_fin" 
-                                   class="form-control" value="<?= $historialFechaFin ?>">
-                        </div>
-                    </div>
-                    
-                    <div class="filter-group">
-                        <div class="form-group">
-                            <label for="historial_tabla"><i class="fas fa-table"></i> Tabla Afectada</label>
-                            <select id="historial_tabla" name="historial_tabla" class="form-control">
-                                <option value="">Todas las tablas</option>
-                                <option value="empleados" <?= $historialTabla === 'empleados' ? 'selected' : '' ?>>Empleados</option>
-                                <option value="usuarios_admin" <?= $historialTabla === 'usuarios_admin' ? 'selected' : '' ?>>Administradores</option>
-                                <option value="permisos" <?= $historialTabla === 'permisos' ? 'selected' : '' ?>>Permisos</option>
-                                <option value="registros_asistencia" <?= $historialTabla === 'registros_asistencia' ? 'selected' : '' ?>>Asistencias</option>
-                                <option value="configuracion_sistema" <?= $historialTabla === 'configuracion_sistema' ? 'selected' : '' ?>>Configuración</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="historial_accion"><i class="fas fa-bolt"></i> Acción</label>
-                            <select id="historial_accion" name="historial_accion" class="form-control">
-                                <option value="">Todas las acciones</option>
-                                <option value="INSERT" <?= $historialAccion === 'INSERT' ? 'selected' : '' ?>>INSERT</option>
-                                <option value="UPDATE" <?= $historialAccion === 'UPDATE' ? 'selected' : '' ?>>UPDATE</option>
-                                <option value="DELETE" <?= $historialAccion === 'DELETE' ? 'selected' : '' ?>>DELETE</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="filter-group">
-                        <div class="form-group">
-                            <label for="historial_creado_por"><i class="fas fa-user"></i> Modificado Por</label>
-                            <input type="text" id="historial_creado_por" name="historial_creado_por" 
-                                   class="form-control" value="<?= htmlspecialchars($historialCreadoPor) ?>" 
-                                   placeholder="Buscar por usuario...">
-                        </div>
-                        
-                        <div class="filter-actions">
-                            <button type="button" onclick="applyHistoryFilters()" class="btn btn-primary">
-                                <i class="fas fa-filter"></i> Aplicar Filtros
-                            </button>
-                            
-                            <!-- Botón Exportar Excel - SOLO para no espectadores -->
-                            <?php if (!$isEspectador): ?>
-                                <button type="button" class="btn btn-warning" onclick="exportToExcel('filtered')">
-                                    <i class="fas fa-file-excel"></i> Exportar Filtrado
-                                </button>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-title"><i class="fas fa-table"></i> Historial de Cambios</div>
-                <div class="table-responsive">
-                    <?php if (!empty($paginatedHistorial)): ?>
-                        <table id="history-table">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>TABLA AFECTADA</th>
-                                    <th>USUARIO AFECTADO</th>
-                                    <th>ACCION</th>
-                                    <th>CAMPO MODIFICADO</th>
-                                    <th>VALOR ANTERIOR</th>
-                                    <th>VALOR NUEVO</th>
-                                    <th>MOTIVO</th>
-                                    <th>MODIFICADO POR</th>
-                                    <th>FECHA MODIFICACION</th>
-                                    <th>HORA MODIFICACION</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php $contador = ($currentPage - 1) * $itemsPerPage + 1; ?>
-                                <?php foreach ($paginatedHistorial as $historial): ?>
-                                    <tr>
-                                        <td><?= $contador++ ?></td>
-                                        <td>
-                                            <span class="badge badge-info"><?= htmlspecialchars($historial['tabla_afectada']) ?></span>
-                                        </td>
-                                        <td><?= htmlspecialchars($historial['usuario_afectado']) ?></td>
-                                        <td>
-                                            <span class="badge <?= 
-                                                $historial['accion'] === 'INSERT' ? 'badge-success' : 
-                                                ($historial['accion'] === 'UPDATE' ? 'badge-warning' : 'badge-danger')
-                                            ?>">
-                                                <?= htmlspecialchars($historial['accion']) ?>
-                                            </span>
-                                        </td>
-                                        <td><?= htmlspecialchars($historial['campo_modificado']) ?></td>
-                                        <td><?= htmlspecialchars($historial['valor_anterior']) ?></td>
-                                        <td><?= htmlspecialchars($historial['valor_nuevo']) ?></td>
-                                        <td><?= htmlspecialchars($historial['motivo']) ?></td>
-                                        <td><?= htmlspecialchars($historial['modificado_por_nombre']) ?></td>
-                                        <td><?= date('d/m/Y', strtotime($historial['fecha_modificacion'])) ?></td>
-                                        <td><?= date('H:i:s', strtotime($historial['fecha_modificacion'])) ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-
-                        <!-- Paginación -->
-                        <?php if ($totalPages > 1): ?>
-                        <div class="pagination">
-                            <?php if ($currentPage > 1): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => 1])) ?>">Primera</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage - 1])) ?>">Anterior</a>
-                            <?php endif; ?>
-                            
-                            <?php 
-                            $startPage = max(1, $currentPage - 2);
-                            $endPage = min($totalPages, $currentPage + 2);
-                            
-                            for ($i = $startPage; $i <= $endPage; $i++): ?>
-                                <?php if ($i == $currentPage): ?>
-                                    <span class="active"><?= $i ?></span>
-                                <?php else: ?>
-                                    <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
-                                <?php endif; ?>
-                            <?php endfor; ?>
-                            
-                            <?php if ($currentPage < $totalPages): ?>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $currentPage + 1])) ?>">Siguiente</a>
-                                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $totalPages])) ?>">Última</a>
-                            <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <div class="no-data">
-                            <i class="fas fa-info-circle" style="font-size: 3rem; color: var(--gray); margin-bottom: 1rem;"></i>
-                            <p>No se encontraron registros en el historial</p>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -4255,6 +3374,94 @@ if (isset($_GET['get_cargos_by_area'])) {
         </div>
     </div>
 
+    <!-- Modal para agregar administrador -->
+    <div id="addAdminModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-user-plus"></i> Agregar Administrador</h3>
+                <span class="close" onclick="closeModal('addAdminModal')">&times;</span>
+            </div>
+            <form method="post" action="">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="admin_empleado_id">Empleado</label>
+                        <select id="admin_empleado_id" name="empleado_id" class="employee-select form-control" required style="width: 100%">
+                            <option value="">Buscar empleado por nombre, apellido o DNI...</option>
+                            <?php foreach ($employeesList as $emp): ?>
+                                <?php if (isset($emp['id']) && isset($emp['nombre_completo']) && isset($emp['dni'])): ?>
+                                    <option value="<?= htmlspecialchars($emp['id']) ?>">
+                                        <?= htmlspecialchars($emp['nombre_completo']) ?> (<?= htmlspecialchars($emp['dni']) ?>)
+                                    </option>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="admin_usuario">Usuario</label>
+                        <input type="text" id="admin_usuario" name="usuario" required class="form-control" placeholder="Ingrese nombre de usuario">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="admin_password">Contraseña (mínimo 4 caracteres)</label>
+                        <input type="password" id="admin_password" name="password" required class="form-control" placeholder="Ingrese contraseña" minlength="4">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="admin_rol">Rol</label>
+                        <select id="admin_rol" name="rol" required class="form-control">
+                            <option value="">Seleccione rol</option>
+                            <option value="admin">Administrador</option>
+                            <option value="supervisor">Supervisor</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('addAdminModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="agregar_administrador">Agregar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal para editar administrador -->
+    <div id="editAdminModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-edit"></i> Editar Administrador</h3>
+                <span class="close" onclick="closeModal('editAdminModal')">&times;</span>
+            </div>
+            <form method="post" action="">
+                <input type="hidden" name="admin_id" id="edit_admin_id">
+                
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="edit_admin_usuario">Usuario</label>
+                        <input type="text" id="edit_admin_usuario" name="usuario" required class="form-control" placeholder="Ingrese nombre de usuario">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_admin_password">Contraseña (dejar vacío para mantener la actual)</label>
+                        <input type="password" id="edit_admin_password" name="password" class="form-control" placeholder="Ingrese nueva contraseña" minlength="4">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_admin_rol">Rol</label>
+                        <select id="edit_admin_rol" name="rol" required class="form-control">
+                            <option value="">Seleccione rol</option>
+                            <option value="admin">Administrador</option>
+                            <option value="supervisor">Supervisor</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editAdminModal')">Cancelar</button>
+                    <button type="submit" class="btn btn-success" name="editar_administrador">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Modal para registro manual de asistencia -->
     <div id="manualAttendanceModal" class="modal">
         <div class="modal-content">
@@ -4412,142 +3619,6 @@ if (isset($_GET['get_cargos_by_area'])) {
         </div>
     </div>
 
-    <!-- Modal para agregar administrador - MEJORADO: Cargos dinámicos por área -->
-    <div id="addAdminModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title"><i class="fas fa-user-plus"></i> Agregar Administrador</h3>
-                <span class="close" onclick="closeModal('addAdminModal')">&times;</span>
-            </div>
-            <form method="post" action="" onsubmit="return validateAdminForm(this)">
-                <div class="modal-body">
-                    <div class="admin-form-container">
-                        <div class="form-group">
-                            <label for="nombres">Nombres</label>
-                            <input type="text" id="nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="apellidos">Apellidos</label>
-                            <input type="text" id="apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="area">Área</label>
-                            <select id="area" name="area" required class="form-control" onchange="updateAdminCargos()">
-                                <option value="">Seleccione área</option>
-                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
-                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="cargo">Cargo</label>
-                            <select id="cargo" name="cargo" required class="form-control">
-                                <option value="">Primero seleccione un área</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="usuario">Usuario</label>
-                            <input type="text" id="usuario" name="usuario" required class="form-control" placeholder="Ingrese usuario">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="password">Contraseña</label>
-                            <input type="password" id="password" name="password" required class="form-control" placeholder="Ingrese contraseña (mínimo 4 caracteres)" minlength="4">
-                            <small class="text-muted">La contraseña debe tener al menos 4 caracteres</small>
-                        </div>
-                        
-                        <div class="form-group form-horizontal-full">
-                            <label for="rol">Rol</label>
-                            <select id="rol" name="rol" required class="form-control">
-                                <option value="">Seleccione rol</option>
-                                <option value="admin">Administrador</option>
-                                <option value="supervisor">Supervisor</option>
-                                <option value="espectador">Espectador</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('addAdminModal')">Cancelar</button>
-                    <button type="submit" class="btn btn-success" name="agregar_admin">Agregar</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal para editar administrador - MEJORADO: Cargos dinámicos por área -->
-    <div id="editAdminModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title"><i class="fas fa-edit"></i> Editar Administrador</h3>
-                <span class="close" onclick="closeModal('editAdminModal')">&times;</span>
-            </div>
-            <form method="post" action="" onsubmit="return validateEditAdminForm(this)">
-                <input type="hidden" name="admin_id" id="edit_admin_id">
-                
-                <div class="modal-body">
-                    <div class="admin-form-container">
-                        <div class="form-group">
-                            <label for="edit_nombres">Nombres</label>
-                            <input type="text" id="edit_nombres" name="nombres" required class="form-control" placeholder="Ingrese nombres">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="edit_apellidos">Apellidos</label>
-                            <input type="text" id="edit_apellidos" name="apellidos" required class="form-control" placeholder="Ingrese apellidos">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="edit_area">Área</label>
-                            <select id="edit_area" name="area" required class="form-control" onchange="updateEditAdminCargos()">
-                                <option value="">Seleccione área</option>
-                                <?php foreach ($AREAS_PREDEFINIDAS as $area): ?>
-                                    <option value="<?= htmlspecialchars($area) ?>"><?= htmlspecialchars($area) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="edit_cargo">Cargo</label>
-                            <select id="edit_cargo" name="cargo" required class="form-control">
-                                <option value="">Primero seleccione un área</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="edit_usuario">Usuario</label>
-                            <input type="text" id="edit_usuario" name="usuario" required class="form-control" placeholder="Ingrese usuario">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="edit_password">Nueva Contraseña</label>
-                            <input type="password" id="edit_password" name="password" class="form-control" placeholder="Dejar vacío para mantener la actual" minlength="4">
-                            <small class="text-muted">Dejar vacío para mantener la contraseña actual. Mínimo 4 caracteres si se cambia.</small>
-                        </div>
-                        
-                        <div class="form-group form-horizontal-full">
-                            <label for="edit_rol">Rol</label>
-                            <select id="edit_rol" name="rol" required class="form-control">
-                                <option value="">Seleccione rol</option>
-                                <option value="admin">Administrador</option>
-                                <option value="supervisor">Supervisor</option>
-                                <option value="espectador">Espectador</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('editAdminModal')">Cancelar</button>
-                    <button type="submit" class="btn btn-success" name="editar_admin">Guardar Cambios</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <!-- Modal para imagen ampliada - MEJORADO -->
     <div id="imageModal" class="image-modal">
         <span class="close-image" onclick="closeImageModal()">&times;</span>
@@ -4580,7 +3651,11 @@ if (isset($_GET['get_cargos_by_area'])) {
                             results: validData.map(function(item) {
                                 return {
                                     id: item.id,
-                                    text: item.nombre_completo + ' (' + item.dni + ')'
+                                    text: item.nombre_completo + ' (' + item.dni + ')',
+                                    nombres: item.nombres,
+                                    apellidos: item.apellidos,
+                                    area: item.area,
+                                    cargo: item.puesto
                                 };
                             })
                         };
@@ -4596,57 +3671,6 @@ if (isset($_GET['get_cargos_by_area'])) {
                     flashMessage.style.display = 'none';
                 }
             }, 2500);
-            
-            // Filtros en tiempo real para reportes
-            $('#search_input').on('input', function() {
-                filterReportTable();
-            });
-            
-            // Filtros de área y cargo para reportes
-            $('#filter_area_report, #filter_cargo_report').on('change', function() {
-                filterReportTable();
-            });
-            
-            // Filtros para administradores
-            $('#search_admin').on('input', function() {
-                filterAdminsTable();
-            });
-            
-            $('#filter_rol_admin, #filter_estado_admin').on('change', function() {
-                filterAdminsTable();
-            });
-            
-            // Filtros para trabajadores
-            $('#search_trabajador').on('input', function() {
-                filterTrabajadoresTable();
-            });
-            
-            $('#filter_area_trabajador, #filter_cargo_trabajador, #filter_estado_trabajador').on('change', function() {
-                filterTrabajadoresTable();
-            });
-            
-            // Actualizar reporte al cambiar fechas - AHORA SIEMPRE FECHA ACTUAL
-            $('#fecha_inicio, #fecha_fin').on('change', function() {
-                var fechaInicio = $('#fecha_inicio').val();
-                var fechaFin = $('#fecha_fin').val();
-                
-                // Si no se selecciona fecha, usar la fecha actual
-                if (!fechaInicio) fechaInicio = '<?= date('Y-m-d') ?>';
-                if (!fechaFin) fechaFin = '<?= date('Y-m-d') ?>';
-                
-                // Actualizar la página con las nuevas fechas
-                var currentUrl = new URL(window.location.href);
-                currentUrl.searchParams.set('fecha_inicio', fechaInicio);
-                currentUrl.searchParams.set('fecha_fin', fechaFin);
-                window.location.href = currentUrl.toString();
-            });
-            
-            // Actualizar vista de áreas
-            $('#tipo_vista').on('change', function() {
-                var tipoVista = $(this).val();
-                window.location.href = '?<?= http_build_query(array_merge($_GET, ['tipo_vista' => 'TIPO_VISTA'])) ?>'
-                    .replace('TIPO_VISTA', tipoVista);
-            });
             
             // Control de tiempo de sesión
             let inactivityTime = function() {
@@ -4671,162 +3695,56 @@ if (isset($_GET['get_cargos_by_area'])) {
             
             // Iniciar el control de inactividad
             inactivityTime();
-        });
-        
-        // Función de filtrado para reportes
-        function filterReportTable() {
-            var searchText = $('#search_input').val().toLowerCase();
-            var areaFilter = $('#filter_area_report').val();
-            var cargoFilter = $('#filter_cargo_report').val();
             
-            $('#report-table tbody tr').each(function() {
-                var area = $(this).data('area') || '';
-                var cargo = $(this).data('cargo') || '';
-                var rowText = $(this).text().toLowerCase();
-                
-                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
-                var matchArea = areaFilter === '' || area === areaFilter;
-                var matchCargo = cargoFilter === '' || cargo === cargoFilter;
-                
-                if (matchSearch && matchArea && matchCargo) {
-                    $(this).show();
-                } else {
-                    $(this).hide();
-                }
-            });
-        }
-        
-        // Función de filtrado para administradores
-        function filterAdminsTable() {
-            var searchText = $('#search_admin').val().toLowerCase();
-            var rolFilter = $('#filter_rol_admin').val();
-            var estadoFilter = $('#filter_estado_admin').val();
-            
-            $('#admins-table tbody tr').each(function() {
-                var rol = $(this).data('rol') || '';
-                var estado = $(this).data('estado') || '';
-                var rowText = $(this).text().toLowerCase();
-                
-                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
-                var matchRol = rolFilter === '' || rol === rolFilter;
-                var matchEstado = estadoFilter === '' || estado === estadoFilter;
-                
-                if (matchSearch && matchRol && matchEstado) {
-                    $(this).show();
-                } else {
-                    $(this).hide();
-                }
-            });
-        }
-        
-        // Función de filtrado para trabajadores
-        function filterTrabajadoresTable() {
-            var searchText = $('#search_trabajador').val().toLowerCase();
-            var areaFilter = $('#filter_area_trabajador').val();
-            var cargoFilter = $('#filter_cargo_trabajador').val();
-            var estadoFilter = $('#filter_estado_trabajador').val();
-            
-            $('#trabajadores-table tbody tr').each(function() {
-                var area = $(this).data('area') || '';
-                var cargo = $(this).data('cargo') || '';
-                var estado = $(this).data('estado') || '';
-                var rowText = $(this).text().toLowerCase();
-                
-                var matchSearch = searchText === '' || rowText.indexOf(searchText) > -1;
-                var matchArea = areaFilter === '' || area === areaFilter;
-                var matchCargo = cargoFilter === '' || cargo === cargoFilter;
-                var matchEstado = estadoFilter === '' || estado === estadoFilter;
-                
-                if (matchSearch && matchArea && matchCargo && matchEstado) {
-                    $(this).show();
-                } else {
-                    $(this).hide();
-                }
-            });
-        }
-        
-        // Aplicar filtros de historial
-        function applyHistoryFilters() {
-            var fechaInicio = $('#historial_fecha_inicio').val();
-            var fechaFin = $('#historial_fecha_fin').val();
-            var tabla = $('#historial_tabla').val();
-            var accion = $('#historial_accion').val();
-            var creadoPor = $('#historial_creado_por').val();
-            
-            var params = new URLSearchParams();
-            params.set('section', 'history');
-            if (fechaInicio) params.set('historial_fecha_inicio', fechaInicio);
-            if (fechaFin) params.set('historial_fecha_fin', fechaFin);
-            if (tabla) params.set('historial_tabla', tabla);
-            if (accion) params.set('historial_accion', accion);
-            if (creadoPor) params.set('historial_creado_por', creadoPor);
-            
-            window.location.href = '?' + params.toString();
-        }
-        
-        // Función para exportar a Excel - SOLO si NO es espectador
-        function exportToExcel(exportType) {
-            var currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.set('export_excel', '1');
-            currentUrl.searchParams.set('export_type', exportType);
-            
-            // Agregar filtros actuales
-            var searchText = $('#search_input').val() || $('#search_admin').val() || $('#search_trabajador').val() || '';
-            var areaFilter = $('#filter_area_report').val() || $('#filter_area_trabajador').val() || '';
-            var cargoFilter = $('#filter_cargo_report').val() || $('#filter_cargo_trabajador').val() || '';
-            var rolFilter = $('#filter_rol_admin').val() || '';
-            var estadoFilter = $('#filter_estado_admin').val() || $('#filter_estado_trabajador').val() || '';
-            
-            if (searchText) currentUrl.searchParams.set('search_term', searchText);
-            if (areaFilter) currentUrl.searchParams.set('filter_area', areaFilter);
-            if (cargoFilter) currentUrl.searchParams.set('filter_cargo', cargoFilter);
-            if (rolFilter) currentUrl.searchParams.set('filter_rol', rolFilter);
-            if (estadoFilter) currentUrl.searchParams.set('filter_estado', estadoFilter);
-            
-            window.location.href = currentUrl.toString();
-        }
-        
-        // Función para actualizar filtro de cargos según el área seleccionada
-        function updateCargoFilter(tipo) {
-            var areaSelect = document.getElementById('filter_area_' + tipo);
-            var cargoSelect = document.getElementById('filter_cargo_' + tipo);
-            var area = areaSelect.value;
-            
-            if (area) {
-                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(area))
-                    .then(response => response.json())
-                    .then(cargos => {
-                        cargoSelect.innerHTML = '<option value="">Todos los cargos</option>';
-                        cargos.forEach(cargo => {
-                            var option = document.createElement('option');
-                            option.value = cargo;
-                            option.textContent = cargo;
-                            cargoSelect.appendChild(option);
+            // Cargar cargos automáticamente cuando se selecciona un área
+            $('#filter_area').on('change', function() {
+                var area = $(this).val();
+                if (area) {
+                    $.get('?get_cargos_by_area=1&area=' + encodeURIComponent(area), function(cargos) {
+                        var cargoSelect = $('#filter_cargo');
+                        cargoSelect.empty().append('<option value="">Todos los cargos</option>');
+                        cargos.forEach(function(cargo) {
+                            cargoSelect.append($('<option>', {
+                                value: cargo,
+                                text: cargo
+                            }));
                         });
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
                     });
-            } else {
-                cargoSelect.innerHTML = '<option value="">Todos los cargos</option>';
-                // Cargar todos los cargos disponibles
-                <?php 
-                $allPositions = [];
-                foreach ($CARGOS_POR_AREA as $cargos) {
-                    $allPositions = array_merge($allPositions, $cargos);
+                } else {
+                    $('#filter_cargo').empty().append('<option value="">Todos los cargos</option>');
                 }
-                $allPositions = array_unique($allPositions);
-                ?>
-                var allPositions = <?= json_encode($allPositions) ?>;
-                allPositions.forEach(cargo => {
-                    var option = document.createElement('option');
-                    option.value = cargo;
-                    option.textContent = cargo;
-                    cargoSelect.appendChild(option);
+            });
+            
+            // Inicializar cargos si ya hay un área seleccionada
+            var currentArea = $('#filter_area').val();
+            if (currentArea) {
+                $.get('?get_cargos_by_area=1&area=' + encodeURIComponent(currentArea), function(cargos) {
+                    var cargoSelect = $('#filter_cargo');
+                    cargoSelect.empty().append('<option value="">Todos los cargos</option>');
+                    cargos.forEach(function(cargo) {
+                        cargoSelect.append($('<option>', {
+                            value: cargo,
+                            text: cargo,
+                            selected: cargo === '<?= $filterCargo ?>'
+                        }));
+                    });
                 });
             }
-        }
+            
+            // Las búsquedas se realizan solo al presionar Enter
+            $('#search_term').on('keypress', function(e) {
+                if (e.which === 13) { // Enter key
+                    $('#filtersForm').submit();
+                }
+            });
+            
+            // Los demás filtros se aplican automáticamente al cambiar
+            $('#filtersForm select').on('change', function() {
+                $('#filtersForm').submit();
+            });
+        });
+        
+        // FUNCIÓN DE EXPORTAR EXCEL ELIMINADA
         
         // Funciones para los modales
         function openAddEmpleadoModal() {
@@ -4884,6 +3802,29 @@ if (isset($_GET['get_cargos_by_area'])) {
                 });
         }
         
+        function openAddAdminModal() {
+            document.getElementById('addAdminModal').style.display = 'block';
+        }
+        
+        function openEditAdminModal(id) {
+            // Hacer una solicitud AJAX para obtener los datos del administrador
+            fetch('?get_admin=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data) {
+                        document.getElementById('edit_admin_id').value = data.id;
+                        document.getElementById('edit_admin_usuario').value = data.usuario || '';
+                        document.getElementById('edit_admin_rol').value = data.rol || '';
+                        
+                        document.getElementById('editAdminModal').style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al cargar los datos del administrador');
+                });
+        }
+        
         function openManualAttendanceModal() {
             document.getElementById('manualAttendanceModal').style.display = 'block';
         }
@@ -4914,40 +3855,11 @@ if (isset($_GET['get_cargos_by_area'])) {
                 });
         }
         
-        function openAddAdminModal() {
-            document.getElementById('addAdminModal').style.display = 'block';
-        }
-        
-        function openEditAdminModal(id) {
-            // Hacer una solicitud AJAX para obtener los datos del administrador
-            fetch('?get_admin=' + id)
-                .then(response => response.json())
-                .then(data => {
-                    if (data) {
-                        document.getElementById('edit_admin_id').value = data.id;
-                        document.getElementById('edit_nombres').value = data.nombres || '';
-                        document.getElementById('edit_apellidos').value = data.apellidos || '';
-                        document.getElementById('edit_area').value = data.area || '';
-                        document.getElementById('edit_usuario').value = data.usuario || '';
-                        document.getElementById('edit_rol').value = data.rol || '';
-                        
-                        // Actualizar cargos según el área
-                        updateEditAdminCargos(data.area, data.cargo);
-                        
-                        document.getElementById('editAdminModal').style.display = 'block';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Error al cargar los datos del administrador');
-                });
-        }
-        
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
         }
         
-        // Función para actualizar cargos de empleado según el área seleccionada (agregar)
+        // Función para actualizar cargos de empleado según el área seleccionada (agregar) - CORREGIDA
         function updateEmpleadoCargos() {
             var area = document.getElementById('area').value;
             var cargoSelect = document.getElementById('cargo');
@@ -4973,64 +3885,8 @@ if (isset($_GET['get_cargos_by_area'])) {
             }
         }
         
-        // Función para actualizar cargos de empleado según el área seleccionada (editar)
+        // Función para actualizar cargos de empleado según el área seleccionada (editar) - CORREGIDA
         function updateEditEmpleadoCargos(area = null, selectedCargo = null) {
-            var areaElem = document.getElementById('edit_area');
-            var areaValue = area || areaElem.value;
-            var cargoSelect = document.getElementById('edit_cargo');
-            
-            if (areaValue) {
-                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(areaValue))
-                    .then(response => response.json())
-                    .then(cargos => {
-                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
-                        cargos.forEach(cargo => {
-                            var option = document.createElement('option');
-                            option.value = cargo;
-                            option.textContent = cargo;
-                            if (selectedCargo && cargo === selectedCargo) {
-                                option.selected = true;
-                            }
-                            cargoSelect.appendChild(option);
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
-                    });
-            } else {
-                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
-            }
-        }
-        
-        // Función para actualizar cargos de administrador según el área seleccionada (agregar)
-        function updateAdminCargos() {
-            var area = document.getElementById('area').value;
-            var cargoSelect = document.getElementById('cargo');
-            
-            if (area) {
-                fetch('?get_cargos_by_area=1&area=' + encodeURIComponent(area))
-                    .then(response => response.json())
-                    .then(cargos => {
-                        cargoSelect.innerHTML = '<option value="">Seleccione cargo</option>';
-                        cargos.forEach(cargo => {
-                            var option = document.createElement('option');
-                            option.value = cargo;
-                            option.textContent = cargo;
-                            cargoSelect.appendChild(option);
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        cargoSelect.innerHTML = '<option value="">Error al cargar cargos</option>';
-                    });
-            } else {
-                cargoSelect.innerHTML = '<option value="">Primero seleccione un área</option>';
-            }
-        }
-        
-        // Función para actualizar cargos de administrador según el área seleccionada (editar)
-        function updateEditAdminCargos(area = null, selectedCargo = null) {
             var areaElem = document.getElementById('edit_area');
             var areaValue = area || areaElem.value;
             var cargoSelect = document.getElementById('edit_cargo');
@@ -5119,33 +3975,6 @@ if (isset($_GET['get_cargos_by_area'])) {
         
         function closeImageModal() {
             document.getElementById('imageModal').style.display = 'none';
-        }
-        
-        // Validación de formulario de administrador (agregar)
-        function validateAdminForm(form) {
-            var password = form.password.value;
-            
-            if (password.length < 4) {
-                alert('La contraseña debe tener al menos 4 caracteres');
-                form.password.focus();
-                return false;
-            }
-            
-            return true;
-        }
-        
-        // Validación de formulario de administrador (editar)
-        function validateEditAdminForm(form) {
-            var password = form.password.value;
-            
-            // Solo validar si se está cambiando la contraseña
-            if (password !== '' && password.length < 4) {
-                alert('La contraseña debe tener al menos 4 caracteres');
-                form.password.focus();
-                return false;
-            }
-            
-            return true;
         }
         
         // Cerrar modal al hacer clic fuera de él

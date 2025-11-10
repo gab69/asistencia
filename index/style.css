@@ -1666,7 +1666,7 @@
         }
         
         /* Mejoras para pantallas muy grandes */
-        @media (min-width: 1600px) {
+        @media (min-width: 2000px) {
             :root {
                 --font-size-base: 1.2rem;
                 --font-size-large: 1.5rem;

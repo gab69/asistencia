@@ -53,7 +53,7 @@
             let i = 0;
             const elem = document.getElementById(elementId);
             elem.innerHTML = '';
-            elem.style.borderRight = '2.5px solid var(--white)';
+            elem.style.borderRight = '3px solid var(--white)';
             
             function typing() {
                 if (i < text.length) {
@@ -255,37 +255,42 @@
             }
         });
         
-        // Crear fuegos artificiales para año nuevo
-        function createFireworks() {
-            const rightPanel = document.querySelector('.right-panel');
-            
-            setInterval(() => {
-                if (document.body.classList.contains('navidad')) {
-                    const firework = document.createElement('div');
-                    firework.classList.add('firework');
-                    
-                    // Posición aleatoria
-                    const left = Math.random() * 100;
-                    firework.style.left = `${left}%`;
-                    firework.style.top = '100%';
-                    
-                    // Color aleatorio
-                    const colors = ['#FFD700', '#FFFFFF', '#FF6B6B', '#4FC3F7'];
-                    firework.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-                    
-                    // Duración aleatoria
-                    const duration = Math.random() * 1 + 0.5;
-                    firework.style.animationDuration = `${duration}s`;
-                    
-                    rightPanel.appendChild(firework);
-                    
-                    // Eliminar después de la animación
-                    setTimeout(() => {
-                        firework.remove();
-                    }, 1500);
-                }
-            }, 500);
-        }
+        // Cerrar modales al hacer clic fuera
+        document.addEventListener('click', function(e) {
+            if (e.target === modalPermisos) {
+                modalPermisos.classList.remove('show');
+                clearModalForms();
+            }
+            if (e.target === modalLoginAdmin) {
+                modalLoginAdmin.classList.remove('show');
+                clearModalForms();
+            }
+        });
         
-        // Iniciar fuegos artificiales
-        createFireworks();
+        // Manejar tecla Escape para cerrar modales
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                if (modalPermisos.classList.contains('show')) {
+                    modalPermisos.classList.remove('show');
+                    clearModalForms();
+                }
+                if (modalLoginAdmin.classList.contains('show')) {
+                    modalLoginAdmin.classList.remove('show');
+                    clearModalForms();
+                }
+            }
+        });
+
+        // Establecer horas por defecto en el formulario de permisos
+        document.addEventListener('DOMContentLoaded', function() {
+            const now = new Date();
+            const horaActual = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+            
+            // Establecer hora de salida como la hora actual
+            document.getElementById('hora-salida').value = horaActual;
+            
+            // Establecer hora de retorno como 1 hora después
+            const horaRetorno = new Date(now.getTime() + 60 * 60 * 1000);
+            const horaRetornoStr = horaRetorno.getHours().toString().padStart(2, '0') + ':' + horaRetorno.getMinutes().toString().padStart(2, '0');
+            document.getElementById('hora-retorno').value = horaRetornoStr;
+        });

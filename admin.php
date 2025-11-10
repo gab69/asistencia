@@ -3,7 +3,7 @@
 ini_set('session.gc_maxlifetime', 900);
 session_set_cookie_params(900);
 
-include 'bd.php';
+include 'database/bd.php';
 // Crear directorio de fotos si no existe
 if (!file_exists(FOTO_DIR)) {
     mkdir(FOTO_DIR, 0777, true);
@@ -60,50 +60,50 @@ $AREAS_PREDEFINIDAS = [
 ];
 
 $CARGOS_POR_AREA = [
-    'Admisión' => ['Jefe', 'Asistente', 'Apoyo', 'Practicante'],
-    'Administración' => ['Director General de Administración', 'Asistente de Direccion General de Administración', 'Apoyo', 'Practicante'],
-    'Archivo Central' => ['Responsable de archivo central', 'asistente de archivo central', 'Apoyo', 'Practicante'],
-    'Asesoría Legal - Secretaría General' => ['Asesor(a) Legal', 'Secretario General', 'Asistente de asesoría legal', 'Asistente de grados y títulos', 'Asistente de Secretaría General', 'Responsable de Grados y Títulos', 'Apoyo', 'Practicante'],
-    'Asuntos académicos' => ['Jefe', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
-    'Biblioteca' => ['Jefe', 'Docente TC', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
-    'Bienes patrimoniales' => ['Jefe', 'analista', 'asistente', 'Apoyo', 'practicante'],
+    'Asesoría Legal - Secretaría General' => ['Asesor(a) Legal', 'Secretario General', 'Asistente de asesoría legal', 'Asistente de grados y títulos', 'Asistente de Secretaría General', 'Responsable de Grados y Títulos', 'Analista', 'Asistente', 'Especialista', 'Apoyo',  'Practicante'],
+    'Archivo Central' => ['Responsable de archivo central', 'Asistente de archivo central', 'Apoyo', 'Especialista', 'Practicante'],
+    'TIC' => ['Jefe de TIC', 'Asistente de TIC', 'Encargado de oficina de TIC', 'Apoyo', 'Practicante'],
+    'Administración' => ['Director General de Administración', 'Responsable', 'Asistente de Dirección General de Administración', 'Apoyo', 'Practicante'],
+    'Gerencia' => ['Gerente General', 'Asistente de Gerencia', 'Apoyo', 'Practicante', 'Secretaria'],
+    'Defensoría Universitaria' => ['Jefe', 'Responsable', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
+    'Rectorado' => ['Rector(a)', 'Asistente', 'Apoyo', 'Practicante'],
+    'Vicerrectorado Académico' => ['Vicerrector(a)', 'Asistente', 'Apoyo', 'Practicante'],
+    'Colocación Laboral' => ['Responsable de colocación laboral', 'Docente TC', 'Apoyo', 'Asistente', 'practicante'],
+    'Decanatura de CCSS' => ['Decano(a)', 'Asistente', 'Apoyo', 'Practicante'],
+    'Decanatura de Ciencias empresariales y Derecho' => ['Decano(a)', 'Asistente', 'Apoyo', 'Practicante'],
+    'Docentes' => ['Docente TC', 'Docente TP', 'Docente Renacyt', 'Docente Ordinarizado', 'Jefe de práctica', 'Apoyo', 'Practicante'],
+    'E.P. Obstetricia' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Estomatología' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Farmacia y Bioquímica' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Medicina' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Derecho' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Psicología' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Enfermería' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'E.P. Administración' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Docente TP', 'Asistente', 'Apoyo', 'Practicante'],
+    'Informes' => ['Jefe', 'Responsable', 'Asistente', 'Apoyo', 'Asesor(a)', 'Practicante'],
+    'Tesorería' => ['Jefe', 'Encargado', 'Cajera', 'Asistente', 'Apoyo', 'Practicante'],
+    'Contabilidad y Finanzas' => ['Jefe', 'Contador I', 'Contador II', 'Contador III', 'Responsable', 'Asistente', 'Auxiliar', 'Apoyo', 'Practicante'],
+    'Escuela de Postgrado' => ['Director(a)', 'Coordinador(a)', 'Docente TC', 'Responsable', 'Asistente', 'Apoyo proveeduría', 'Asesora de ventas', 'Apoyo', 'Practicante'],
+    'Instituto de Investigación' => ['Director', 'Coordinador', 'Docente TC', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Asuntos académicos' => ['Jefe', 'Responsable', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
     'Bienestar Universitario' => ['Jefe', 'Docente TC', 'Asistente', 'Responsable Deportes', 'Responsable Cultura', 'Responsable Psicopedagogico', 'Responsable de becas', 'Responsable de tópico', 'Asistente social', 'Apoyo', 'Practicante'],
     'Calidad Educativa y Acreditación' => ['Director', 'Coordinador', 'Docente TC', 'Especialista', 'Asistente', 'Apoyo', 'Practicante'],
-    'Colocación Laboral' => ['Responsable de colocación laboral', 'Docente TC', 'apoyo', 'asistente', 'practicante'],
-    'Contabilidad y Finanzas' => ['Jefe', 'Contador I', 'Contador II', 'Contador III', 'Asistente', 'Auxiliar', 'Apoyo', 'Practicante'],
-    'Cosmiatría' => ['Jefe', 'analista', 'Docente', 'asistente', 'Apoyo', 'practicante'],
-    'Decanatura de CCSS' => ['Decano (a)', 'asistente', 'apoyo', 'practicante'],
-    'Decanatura de Ciencias empresariales y Derecho' => ['Decano (a)', 'asistente', 'apoyo', 'practicante'],
-    'Defensoría Universitaria' => ['Jefe', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
-    'Docentes' => ['DTC', 'DTP','JP','DL','JPL'],
-    'E.P. Administración' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Derecho' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Enfermería' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Estomatología' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Farmacia y Bioquímica' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Medicina' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Obstetricia' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'E.P. Psicología' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Docente TP', 'Apoyo', 'Practicante'],
-    'Escuela de Postgrado' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Apoyo proveduría', 'Asesora de ventas', 'Apoyo', 'Practicante'],
-    'Gerencia' => ['Gerente General', 'Asistente de Gerencia', 'Apoyo', 'Practicante', 'Secretaria'],
-    'Informes' => ['Jefe', 'Asistente', 'Apoyo', 'Practicante'],
-    'Instituto de Investigación' => ['Director', 'Coordinador', 'Docente TC Asistente', 'Apoyo', 'Practicante'],
-    'Laboratorio' => ['Jefe', 'analista', 'asistente', 'apoyo', 'practicante'],
-    'Limpieza' => ['Jefe', 'supervisor', 'operario', 'Apoyo'],
-    'Logística' => ['Jefe', 'analista', 'asistente', 'Apoyo', 'practicante'],
-    'Mantenimiento' => ['Jefe', 'supervisor', 'operario', 'responsable de unidades dentales', 'Encargado de áreas verdes', 'apoyo'],
-    'Marketing' => ['Jefe', 'Docente TC', 'Asistente', 'Gestor de contenido', 'Diseñador', 'Community Manager', 'Promotor de colegio', 'Telemarketing', 'Apoyo', 'Practicante'],
-    'Mesa de partes' => ['Jefe', 'analista', 'asistente', 'apoyo', 'practicante'],
-    'Otros' => ['Otros'],
-    'Planeación' => ['Jefe', 'analista', 'asistente', 'Apoyo', 'practicante'],
-    'Produccion de Bienes y Servicios' => ['Jefe', 'analista', 'asistente', 'Apoyo', 'practicante'],
-    'Rectorado' => ['Rector(a)', 'Asistente', 'Apoyo', 'Practicante'],
-    'Registros académicos' => ['Jefe', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
-    'Talento Humano' => ['Jefe', 'analista', 'asistente', 'Apoyo', 'practicante'],
-    'Tesorería' => ['Jefe', 'Cajera', 'Asistente', 'Apoyo', 'Practicante'],
-    'TIC' => ['Jefe de TIC', 'Asistente de TIC', 'Encargado de oficina de TIC', 'Apoyo', 'Practicante'],
-    'Vicerrectorado Académico' => ['Vicerrector', 'Asistente', 'Apoyo', 'Practicante'],
-    'Vigilancia' => ['Jefe', 'supervisor', 'operario', 'apoyo']
+    'Marketing' => ['Jefe', 'Responsable', 'Docente TC', 'Asistente', 'Gestor de contenido', 'Diseñador gráfico', 'Community Manager', 'Promotor de colegio', 'Telemarketing', 'Asesor', 'Apoyo', 'Practicante'],
+    'Limpieza' => ['Jefe', 'Supervisor', 'Operario', 'Auxiliar', 'Apoyo'],
+    'Talento Humano' => ['Jefe', 'Analista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Producción de Bienes y Servicios' => ['Jefe', 'Responsable', 'Analista', 'Asesor', 'Asistente', 'Apoyo', 'Practicante'],
+    'Logística' => ['Jefe', 'Responsable','Analista', 'Asistente', 'Apoyo', 'Practicante'],
+    'Mantenimiento' => ['Jefe', 'Supervisor', 'Operario', 'Responsable de unidades dentales', 'Encargado de áreas verdes', 'Asistente', 'Apoyo'],
+    'Vigilancia' => ['Jefe', 'Supervisor', 'Operario', 'Vigilante', 'Apoyo'],
+    'Laboratorio' => ['Jefe', 'Analista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Mesa de partes' => ['Jefe', 'Analista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Registros académicos' => ['Jefe', 'Responsable', 'Docente TC', 'Asistente', 'Apoyo', 'Practicante'],
+    'Biblioteca' => ['Jefe', 'Docente TC', 'Analista', 'Especialista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Cosmiatría' => ['Jefe', 'Analista', 'Responsable', 'Docente', 'Asistente', 'Apoyo', 'Practicante'],
+    'Admisión' => ['Jefe', 'Asistente', 'Responsable', 'Apoyo', 'Practicante'],
+    'Planeación' => ['Jefe', 'Analista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante'],
+    'Bienes patrimoniales' => ['Jefe', 'Analista', 'Responsable', 'Asistente', 'Apoyo', 'Practicante']
+
 ];
 
 // Verificar sesión de administrador
@@ -191,6 +191,11 @@ class ReportGenerator {
         if (!empty($filtros['estado'])) {
             $where .= " AND e.estado = ?";
             $params[] = $filtros['estado'];
+        }
+        
+        if (!empty($filtros['tipo_personal'])) {
+            $where .= " AND e.tipo_personal = ?";
+            $params[] = $filtros['tipo_personal'];
         }
         
         if (!empty($filtros['busqueda'])) {
@@ -287,6 +292,11 @@ class ReportGenerator {
         if (!empty($filtros['cargo'])) {
             $where .= " AND e.puesto = ?";
             $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['tipo_personal'])) {
+            $where .= " AND e.tipo_personal = ?";
+            $params[] = $filtros['tipo_personal'];
         }
         
         if (!empty($filtros['busqueda'])) {
@@ -388,6 +398,11 @@ class ReportGenerator {
         if (!empty($filtros['cargo'])) {
             $where .= " AND e.puesto = ?";
             $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['tipo_personal'])) {
+            $where .= " AND e.tipo_personal = ?";
+            $params[] = $filtros['tipo_personal'];
         }
         
         if (!empty($filtros['turno'])) {
@@ -569,6 +584,11 @@ class ReportGenerator {
             $params[] = $filtros['cargo'];
         }
         
+        if (!empty($filtros['tipo_personal'])) {
+            $where .= " AND e.tipo_personal = ?";
+            $params[] = $filtros['tipo_personal'];
+        }
+        
         if (!empty($filtros['busqueda'])) {
             $where .= " AND (e.dni LIKE ? OR e.nombres LIKE ? OR e.apellidos LIKE ? OR e.area LIKE ? OR e.puesto LIKE ? OR p.tipo_permiso LIKE ? OR p.motivo LIKE ?)";
             $searchTerm = "%{$filtros['busqueda']}%";
@@ -618,6 +638,11 @@ class ReportGenerator {
         if (!empty($filtros['cargo'])) {
             $where .= " AND e.puesto = ?";
             $params[] = $filtros['cargo'];
+        }
+        
+        if (!empty($filtros['tipo_personal'])) {
+            $where .= " AND e.tipo_personal = ?";
+            $params[] = $filtros['tipo_personal'];
         }
         
         if (!empty($filtros['busqueda'])) {
@@ -1323,6 +1348,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_configurac
     }
 }
 
+// Procesar actualización de perfil de supervisor
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['actualizar_perfil_supervisor']) && $isSupervisor) {
+    $usuario = $_POST['usuario'];
+    $password = $_POST['password'];
+    $confirmar_password = $_POST['confirmar_password'];
+    
+    // Validaciones
+    if (empty($usuario)) {
+        $_SESSION['error_message'] = "El nombre de usuario no puede estar vacío";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=perfil");
+        exit;
+    }
+    
+    if (!empty($password)) {
+        if (strlen($password) < 4) {
+            $_SESSION['error_message'] = "La contraseña debe tener al menos 4 caracteres";
+            header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=perfil");
+            exit;
+        }
+        
+        if ($password !== $confirmar_password) {
+            $_SESSION['error_message'] = "Las contraseñas no coinciden";
+            header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=perfil");
+            exit;
+        }
+    }
+    
+    // Verificar si el usuario ya existe (excluyendo el actual)
+    $stmt = $pdo->prepare("SELECT id FROM usuarios_admin WHERE usuario = ? AND id != ?");
+    $stmt->execute([$usuario, $_SESSION['admin_id']]);
+    if ($stmt->fetch()) {
+        $_SESSION['error_message'] = "Error: Ya existe otro usuario con el nombre de usuario $usuario";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=perfil");
+        exit;
+    }
+    
+    try {
+        if (!empty($password)) {
+            $password_hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ?, password = ? WHERE id = ?");
+            $stmt->execute([$usuario, $password_hash, $_SESSION['admin_id']]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE usuarios_admin SET usuario = ? WHERE id = ?");
+            $stmt->execute([$usuario, $_SESSION['admin_id']]);
+        }
+        
+        // Actualizar la sesión
+        $_SESSION['admin_username'] = $usuario;
+        
+        // Registrar en historial
+        registrarHistorial('usuarios_admin', $usuario, 'UPDATE', 'perfil_supervisor', $_SESSION['admin_username'], $usuario, "Actualización de perfil de supervisor", $pdo);
+        
+        $_SESSION['success_message'] = "Perfil actualizado correctamente";
+        header("Location: ".$_SERVER['PHP_SELF']."?section=dashboard&report_type=perfil");
+        exit;
+    } catch (PDOException $e) {
+        $_SESSION['error_message'] = "Error al actualizar perfil: " . $e->getMessage();
+    }
+}
+
 // NUEVA FUNCIÓN: Exportar a Excel CON DISEÑO PROFESIONAL MEJORADO
 if (isset($_GET['export_excel'])) {
     $reportType = $_GET['report_type'] ?? 'daily';
@@ -1337,6 +1422,7 @@ if (isset($_GET['export_excel'])) {
     $filterEstado = $_GET['filter_estado'] ?? '';
     $filterRol = $_GET['filter_rol'] ?? '';
     $filterTurno = $_GET['filter_turno'] ?? '';
+    $filterTipoPersonal = $_GET['filter_tipo_personal'] ?? '';
     
     if ($searchTerm) $filtros['busqueda'] = $searchTerm;
     if ($filterArea) $filtros['area'] = $filterArea;
@@ -1344,6 +1430,7 @@ if (isset($_GET['export_excel'])) {
     if ($filterEstado) $filtros['estado'] = $filterEstado;
     if ($filterRol) $filtros['rol'] = $filterRol;
     if ($filterTurno) $filtros['turno'] = $filterTurno;
+    if ($filterTipoPersonal) $filtros['tipo_personal'] = $filterTipoPersonal;
     
     // Obtener todos los datos sin paginación
     switch ($reportType) {
@@ -1433,6 +1520,9 @@ if (isset($_GET['export_excel'])) {
     }
     if (!empty($filterTurno)) {
         $filtrosAplicados[] = "Turno: $filterTurno";
+    }
+    if (!empty($filterTipoPersonal)) {
+        $filtrosAplicados[] = "Tipo Personal: $filterTipoPersonal";
     }
     if (!empty($searchTerm)) {
         $filtrosAplicados[] = "Búsqueda: $searchTerm";
@@ -1700,6 +1790,9 @@ function aplicarFiltrosServidor($data, $filtros) {
                     case 'turno':
                         $valorFila = $row['turno'] ?? '';
                         break;
+                    case 'tipo_personal':
+                        $valorFila = $row['tipo_personal'] ?? '';
+                        break;
                     case 'busqueda':
                         // Buscar en todos los campos de texto
                         $valorFila = strtolower(implode(' ', array_filter($row, function($v) {
@@ -1752,6 +1845,7 @@ $filterCargo = $_GET['filter_cargo'] ?? '';
 $filterEstado = $_GET['filter_estado'] ?? '';
 $filterRol = $_GET['filter_rol'] ?? '';
 $filterTurno = $_GET['filter_turno'] ?? '';
+$filterTipoPersonal = $_GET['filter_tipo_personal'] ?? '';
 
 if ($searchTerm) $filtros['busqueda'] = $searchTerm;
 if ($filterArea) $filtros['area'] = $filterArea;
@@ -1759,6 +1853,7 @@ if ($filterCargo) $filtros['cargo'] = $filterCargo;
 if ($filterEstado) $filtros['estado'] = $filterEstado;
 if ($filterRol) $filtros['rol'] = $filterRol;
 if ($filterTurno) $filtros['turno'] = $filterTurno;
+if ($filterTipoPersonal) $filtros['tipo_personal'] = $filterTipoPersonal;
 
 // Inicializar variables para evitar warnings
 $allData = [];
@@ -1803,6 +1898,10 @@ switch ($reportType) {
         
     case 'config':
         $reportTitle = "Configuración del Sistema";
+        break;
+        
+    case 'perfil':
+        $reportTitle = "Configurar Perfil";
         break;
         
     default: // daily
@@ -2815,6 +2914,12 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <i class="fas fa-cog"></i> <span>Configuración</span>
                 </a>
             <?php endif; ?>
+            
+            <?php if ($isSupervisor): ?>
+                <a href="?section=dashboard&report_type=perfil" class="menu-item <?= $reportType === 'perfil' ? 'active' : '' ?>">
+                    <i class="fas fa-user-edit"></i> <span>Mi Perfil</span>
+                </a>
+            <?php endif; ?>
         </div>
     </div>
     
@@ -2872,7 +2977,7 @@ if (isset($_GET['get_cargos_by_area'])) {
             <?php endif; ?>
             
             <!-- BOTÓN DE EXPORTAR EXCEL AGREGADO -->
-            <?php if ($reportType !== 'config'): ?>
+            <?php if ($reportType !== 'config' && $reportType !== 'perfil'): ?>
                 <a href="?<?= http_build_query(array_merge($_GET, ['export_excel' => 1])) ?>" class="btn btn-excel">
                     <i class="fas fa-file-excel"></i> Excel
                 </a>
@@ -2885,7 +2990,7 @@ if (isset($_GET['get_cargos_by_area'])) {
         </div>
         
         <!-- Filtros para todos los reportes -->
-        <?php if ($reportType !== 'config'): ?>
+        <?php if ($reportType !== 'config' && $reportType !== 'perfil'): ?>
         <div class="filters-container">
             <form method="get" id="filtersForm">
                 <input type="hidden" name="section" value="dashboard">
@@ -2895,12 +3000,12 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <?php if (in_array($reportType, ['daily', 'tardiness', 'permission', 'no_asistencia'])): ?>
                         <div class="form-group">
                             <label for="fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
-                            <input type="date" id="fecha_inicio" name="fecha_inicio" class="form-control" value="<?= $fechaInicio ?>">
+                            <input type="date" id="fecha_inicio" name="fecha_inicio" class="form-control" value="<?= $fechaInicio ?>" onchange="submitFilters()">
                         </div>
                         
                         <div class="form-group">
                             <label for="fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
-                            <input type="date" id="fecha_fin" name="fecha_fin" class="form-control" value="<?= $fechaFin ?>">
+                            <input type="date" id="fecha_fin" name="fecha_fin" class="form-control" value="<?= $fechaFin ?>" onchange="submitFilters()">
                         </div>
                     <?php endif; ?>
                     
@@ -2908,18 +3013,18 @@ if (isset($_GET['get_cargos_by_area'])) {
                         <div class="form-group">
                             <label for="historial_fecha_inicio"><i class="fas fa-calendar-alt"></i> Fecha Inicio</label>
                             <input type="date" id="historial_fecha_inicio" name="historial_fecha_inicio" 
-                                   class="form-control" value="<?= $historialFechaInicio ?>">
+                                   class="form-control" value="<?= $historialFechaInicio ?>" onchange="submitFilters()">
                         </div>
                         
                         <div class="form-group">
                             <label for="historial_fecha_fin"><i class="fas fa-calendar-alt"></i> Fecha Fin</label>
                             <input type="date" id="historial_fecha_fin" name="historial_fecha_fin" 
-                                   class="form-control" value="<?= $historialFechaFin ?>">
+                                   class="form-control" value="<?= $historialFechaFin ?>" onchange="submitFilters()">
                         </div>
                         
                         <div class="form-group">
                             <label for="historial_tabla"><i class="fas fa-table"></i> Tabla Afectada</label>
-                            <select id="historial_tabla" name="historial_tabla" class="form-control">
+                            <select id="historial_tabla" name="historial_tabla" class="form-control" onchange="submitFilters()">
                                 <option value="">Todas las tablas</option>
                                 <option value="empleados" <?= $historialTabla === 'empleados' ? 'selected' : '' ?>>Empleados</option>
                                 <option value="usuarios_admin" <?= $historialTabla === 'usuarios_admin' ? 'selected' : '' ?>>Administradores</option>
@@ -2931,7 +3036,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                         
                         <div class="form-group">
                             <label for="historial_accion"><i class="fas fa-bolt"></i> Acción</label>
-                            <select id="historial_accion" name="historial_accion" class="form-control">
+                            <select id="historial_accion" name="historial_accion" class="form-control" onchange="submitFilters()">
                                 <option value="">Todas las acciones</option>
                                 <option value="INSERT" <?= $historialAccion === 'INSERT' ? 'selected' : '' ?>>INSERT</option>
                                 <option value="UPDATE" <?= $historialAccion === 'UPDATE' ? 'selected' : '' ?>>UPDATE</option>
@@ -2943,7 +3048,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                             <label for="historial_creado_por"><i class="fas fa-user"></i> Modificado Por</label>
                             <input type="text" id="historial_creado_por" name="historial_creado_por" 
                                    class="form-control" value="<?= htmlspecialchars($historialCreadoPor) ?>" 
-                                   placeholder="Buscar por usuario...">
+                                   placeholder="Buscar por usuario..." onchange="submitFilters()">
                         </div>
                     <?php endif; ?>
                     
@@ -2951,7 +3056,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <?php if (in_array($reportType, ['daily', 'tardiness', 'permission', 'no_asistencia', 'trabajadores'])): ?>
                         <div class="form-group">
                             <label for="filter_area"><i class="fas fa-building"></i> Área</label>
-                            <select id="filter_area" name="filter_area" class="form-control">
+                            <select id="filter_area" name="filter_area" class="form-control" onchange="submitFilters()">
                                 <option value="">Todas las áreas</option>
                                 <?php foreach ($areas as $area): ?>
                                     <option value="<?= htmlspecialchars($area) ?>" <?= $filterArea === $area ? 'selected' : '' ?>><?= htmlspecialchars($area) ?></option>
@@ -2961,9 +3066,19 @@ if (isset($_GET['get_cargos_by_area'])) {
                         
                         <div class="form-group">
                             <label for="filter_cargo"><i class="fas fa-briefcase"></i> Cargo</label>
-                            <select id="filter_cargo" name="filter_cargo" class="form-control">
+                            <select id="filter_cargo" name="filter_cargo" class="form-control" onchange="submitFilters()">
                                 <option value="">Todos los cargos</option>
                                 <!-- Los cargos se cargarán dinámicamente según el área seleccionada -->
+                            </select>
+                        </div>
+                        
+                        <!-- NUEVO: Filtro de Tipo de Personal -->
+                        <div class="form-group">
+                            <label for="filter_tipo_personal"><i class="fas fa-user-tag"></i> Tipo de Personal</label>
+                            <select id="filter_tipo_personal" name="filter_tipo_personal" class="form-control" onchange="submitFilters()">
+                                <option value="">Todos los tipos</option>
+                                <option value="Administrativo" <?= $filterTipoPersonal === 'Administrativo' ? 'selected' : '' ?>>Administrativo</option>
+                                <option value="Docente" <?= $filterTipoPersonal === 'Docente' ? 'selected' : '' ?>>Docente</option>
                             </select>
                         </div>
                     <?php endif; ?>
@@ -2972,7 +3087,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <?php if ($reportType === 'no_asistencia'): ?>
                         <div class="form-group">
                             <label for="filter_turno"><i class="fas fa-clock"></i> Turno</label>
-                            <select id="filter_turno" name="filter_turno" class="form-control">
+                            <select id="filter_turno" name="filter_turno" class="form-control" onchange="submitFilters()">
                                 <option value="">Todos los turnos</option>
                                 <option value="MAÑANA" <?= $filterTurno === 'MAÑANA' ? 'selected' : '' ?>>Mañana</option>
                                 <option value="TARDE" <?= $filterTurno === 'TARDE' ? 'selected' : '' ?>>Tarde</option>
@@ -2983,7 +3098,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <?php if (in_array($reportType, ['trabajadores', 'administradores'])): ?>
                         <div class="form-group">
                             <label for="filter_estado"><i class="fas fa-circle"></i> Estado</label>
-                            <select id="filter_estado" name="filter_estado" class="form-control">
+                            <select id="filter_estado" name="filter_estado" class="form-control" onchange="submitFilters()">
                                 <option value="">Todos los estados</option>
                                 <option value="activo" <?= $filterEstado === 'activo' ? 'selected' : '' ?>>Activo</option>
                                 <option value="inactivo" <?= $filterEstado === 'inactivo' ? 'selected' : '' ?>>Inactivo</option>
@@ -2994,7 +3109,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                     <?php if ($reportType === 'administradores'): ?>
                         <div class="form-group">
                             <label for="filter_rol"><i class="fas fa-user-tag"></i> Rol</label>
-                            <select id="filter_rol" name="filter_rol" class="form-control">
+                            <select id="filter_rol" name="filter_rol" class="form-control" onchange="submitFilters()">
                                 <option value="">Todos los roles</option>
                                 <option value="admin" <?= $filterRol === 'admin' ? 'selected' : '' ?>>Administrador</option>
                                 <option value="supervisor" <?= $filterRol === 'supervisor' ? 'selected' : '' ?>>Supervisor</option>
@@ -3004,7 +3119,7 @@ if (isset($_GET['get_cargos_by_area'])) {
                     
                     <div class="form-group">
                         <label for="search_term"><i class="fas fa-search"></i> Buscar</label>
-                        <input type="text" id="search_term" name="search_term" class="form-control" placeholder="Buscar en todos los datos..." value="<?= htmlspecialchars($searchTerm) ?>">
+                        <input type="text" id="search_term" name="search_term" class="form-control" placeholder="Buscar en todos los datos..." value="<?= htmlspecialchars($searchTerm) ?>" onchange="submitFilters()">
                     </div>
                 </div>
             </form>
@@ -3028,6 +3143,40 @@ if (isset($_GET['get_cargos_by_area'])) {
                         <div style="text-align: center; margin-top: 2rem;">
                             <button type="submit" name="actualizar_configuracion" class="btn btn-success">
                                 <i class="fas fa-save"></i> Guardar Configuración
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        <?php elseif ($reportType === 'perfil' && $isSupervisor): ?>
+            <!-- Sección de Perfil para Supervisor -->
+            <div class="card">
+                <div class="card-title"><i class="fas fa-user-edit"></i> Configurar Mi Perfil</div>
+                <form method="post" action="">
+                    <div style="max-width: 500px; margin: 0 auto;">
+                        <div class="form-group">
+                            <label for="usuario">Nombre de Usuario</label>
+                            <input type="text" id="usuario" name="usuario" 
+                                   class="form-control" value="<?= htmlspecialchars($_SESSION['admin_username']) ?>" 
+                                   required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="password">Nueva Contraseña (dejar vacío para mantener la actual)</label>
+                            <input type="password" id="password" name="password" 
+                                   class="form-control" placeholder="Ingrese nueva contraseña">
+                            <small class="text-muted">Mínimo 4 caracteres</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="confirmar_password">Confirmar Nueva Contraseña</label>
+                            <input type="password" id="confirmar_password" name="confirmar_password" 
+                                   class="form-control" placeholder="Confirme la nueva contraseña">
+                        </div>
+                        
+                        <div style="text-align: center; margin-top: 2rem;">
+                            <button type="submit" name="actualizar_perfil_supervisor" class="btn btn-success">
+                                <i class="fas fa-save"></i> Actualizar Perfil
                             </button>
                         </div>
                     </div>
@@ -3981,6 +4130,11 @@ if (isset($_GET['get_cargos_by_area'])) {
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
     <script>
+        // Función para enviar filtros automáticamente
+        function submitFilters() {
+            document.getElementById('filtersForm').submit();
+        }
+        
         // Inicializar Select2 para los selects
         $(document).ready(function() {
             $('.employee-select').select2({
@@ -4084,16 +4238,9 @@ if (isset($_GET['get_cargos_by_area'])) {
                 });
             }
             
-            // Las búsquedas se realizan solo al presionar Enter
-            $('#search_term').on('keypress', function(e) {
-                if (e.which === 13) { // Enter key
-                    $('#filtersForm').submit();
-                }
-            });
-            
-            // Los demás filtros se aplican automáticamente al cambiar
-            $('#filtersForm select').on('change', function() {
-                $('#filtersForm').submit();
+            // Los filtros se aplican automáticamente al cambiar
+            $('#filtersForm select, #filtersForm input').on('change', function() {
+                submitFilters();
             });
         });
         

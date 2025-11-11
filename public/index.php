@@ -194,7 +194,8 @@
             </div>
             
             <div class="footer">
-                <p>Sistema de Asistencia &copy; <?= date('Y') ?> - Universidad Roosevelt</p>
+                <p>Control de Asistencia &copy; <?= date('Y') ?> - Universidad Roosevelt</p>
+                <p>Desarrollado por @GabRC</p>
             </div>
         </div>
         

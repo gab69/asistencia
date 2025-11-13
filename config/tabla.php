@@ -110,7 +110,7 @@ $pdo->exec("
 // Insertar datos de prueba (solo para desarrollo) - CORREGIDO
 $pdo->exec("
    INSERT IGNORE INTO empleados (id, dni, nombres, apellidos, area, puesto, inicio_contrato, fin_contrato, tipo_personal, foto, estado) VALUES
-(1, '12345678', 'Juan', 'Pérez', 'Académico', 'Profesor', '2025-01-01', '2027-12-31', 'Docente', '12345678.png', 'activo');
+(1, '12345678', 'Juan', 'Pérez', 'Académico', 'Profesor', '2025-01-01', '2099-12-31', 'Docente', '12345678.png', 'activo');
     
     INSERT IGNORE INTO usuarios_admin (id, nombres, apellidos, usuario, password, rol, estado) VALUES 
     (1, 'Administrador', 'Principal', 'admin', '$2y$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', 'activo');

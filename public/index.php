@@ -101,6 +101,8 @@
                             <option value="Personal">Personal</option>
                             <option value="Médico">Médico</option>
                             <option value="Familiar">Familiar</option>
+                            <option value="Comision">Comisión de Servicios</option>
+                            <option value="Visita_otra_sede">Visita a la Otra Sede</option>
                             <option value="Otros">Otros</option>
                         </select>
                     </div>

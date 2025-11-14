@@ -88,8 +88,8 @@
                     <div class="form-group">
                         <label for="modal-dni-permisos">DNI del Empleado:</label>
                         <input type="text" id="modal-dni-permisos" name="dni" required 
-                                pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
-                             placeholder="Ingrese su DNI" maxlength="8" inputmode="numeric"
+                                pattern="[0-9]{9}" title="Ingrese un DNI válido (8 dígitos)"
+                             placeholder="Ingrese su DNI" maxlength="9" inputmode="numeric"
                              oninput="this.value = this.value.replace(/[^0-9]/g, '');">
                         <div class="form-description">Ingrese su número de DNI de 8 dígitos</div>
                     </div>
@@ -179,8 +179,8 @@
                 <div class="form-group">
                     <label for="dni">Número de DNI:</label>
                         <input type="text" id="dni" name="dni" required autofocus
-                        pattern="[0-9]{8}" title="Ingrese un DNI válido (8 dígitos)"
-                        placeholder="Ingrese su DNI" maxlength="8" inputmode="numeric"
+                        pattern="[0-9]{9}" title="Ingrese un DNI válido (8 dígitos)"
+                        placeholder="Ingrese su DNI" maxlength="9" inputmode="numeric"
                         oninput="this.value = this.value.replace(/[^0-9]/g, '');">
                     </div>
                 
@@ -576,7 +576,7 @@
         // Auto-rellenar DNI en el modal si ya está en el formulario principal
         btnPermisos.addEventListener('click', function() {
             const dniPrincipal = document.getElementById('dni').value;
-            if (dniPrincipal && /^\d{8}$/.test(dniPrincipal)) {
+            if (dniPrincipal && /^\d{9}$/.test(dniPrincipal)) {
                 document.getElementById('modal-dni-permisos').value = dniPrincipal;
             }
         });

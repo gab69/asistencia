@@ -32,7 +32,7 @@ try {
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS empleados (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        dni VARCHAR(8) NOT NULL UNIQUE,
+        dni VARCHAR(9) NOT NULL UNIQUE,
         nombres VARCHAR(50) NOT NULL,
         apellidos VARCHAR(50) NOT NULL,
         area VARCHAR(50) NOT NULL,

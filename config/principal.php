@@ -195,8 +195,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         // Procesamiento del registro normal de asistencia
         $dni = trim($_POST['dni']);
         
-        if (empty($dni) || !preg_match('/^\d{9}$/', $dni)) {
-            $_SESSION['notifications'][] = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
+        if (empty($dni) || !preg_match('/^\d{8,9}$/', $dni)) {
+            $_SESSION['notifications'][] = ['message' => 'DNI inválido', 'type' => 'error'];
         } else {
             $employee = $attendanceSystem->verifyEmployee($dni);
             
@@ -221,7 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['admin_login'])) {
         // Procesamiento de permiso especial
         $dni = trim($_POST['dni']);
         
-        if (empty($dni) || !preg_match('/^\d{9}$/', $dni)) {
+        if (empty($dni) || !preg_match('/^\d{8,9}$/', $dni)) {
             $_SESSION['notifications'][] = ['message' => 'DNI inválido (8 dígitos)', 'type' => 'error'];
         } else {
             $employee = $attendanceSystem->verifyEmployee($dni);

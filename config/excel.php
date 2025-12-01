@@ -451,17 +451,13 @@ if (isset($_GET['export_excel'])) {
                     $html .= '<td>' . $row['puesto'] . '</td>';
                     $html .= '<td><span class="badge badge-warning">MAÑANA</span></td>';
                     $html .= '<td>' . $row['total_faltas_manana'] . '</td>';
-                    // FECHAS FALTAS en formato vertical
+                    // MODIFICADO: FECHAS FALTAS separadas por comas
                     $html .= '<td>';
                     if (!empty($row['faltas_manana'])) {
-                        $html .= '<div class="vertical-list">';
-                        foreach (array_slice($row['faltas_manana'], 0, 10) as $fecha) {
-                            $html .= '<div class="vertical-item">' . $fecha . '</div>';
-                        }
+                        $html .= implode(', ', array_slice($row['faltas_manana'], 0, 10));
                         if (count($row['faltas_manana']) > 10) {
-                            $html .= '<div class="vertical-item">...</div>';
+                            $html .= ', ...';
                         }
-                        $html .= '</div>';
                     } else {
                         $html .= '-';
                     }
@@ -478,17 +474,13 @@ if (isset($_GET['export_excel'])) {
                     $html .= '<td>' . $row['puesto'] . '</td>';
                     $html .= '<td><span class="badge badge-warning">TARDE</span></td>';
                     $html .= '<td>' . $row['total_faltas_tarde'] . '</td>';
-                    // FECHAS FALTAS en formato vertical
+                    // MODIFICADO: FECHAS FALTAS separadas por comas
                     $html .= '<td>';
                     if (!empty($row['faltas_tarde'])) {
-                        $html .= '<div class="vertical-list">';
-                        foreach (array_slice($row['faltas_tarde'], 0, 10) as $fecha) {
-                            $html .= '<div class="vertical-item">' . $fecha . '</div>';
-                        }
+                        $html .= implode(', ', array_slice($row['faltas_tarde'], 0, 10));
                         if (count($row['faltas_tarde']) > 10) {
-                            $html .= '<div class="vertical-item">...</div>';
+                            $html .= ', ...';
                         }
-                        $html .= '</div>';
                     } else {
                         $html .= '-';
                     }
@@ -558,26 +550,18 @@ if (isset($_GET['export_excel'])) {
                 $html .= '<td>' . (!empty($row['registros_salida_manana']) ? min($row['registros_salida_manana']) : '-') . '</td>';
                 $html .= '<td>' . (!empty($row['registros_entrada_tarde']) ? min($row['registros_entrada_tarde']) : '-') . '</td>';
                 $html .= '<td>' . (!empty($row['registros_salida_tarde']) ? min($row['registros_salida_tarde']) : '-') . '</td>';
-                // REGISTROS en formato vertical
+                // MODIFICADO: REGISTROS separados por comas
                 $html .= '<td>';
                 if (!empty($row['todos_registros'])) {
-                    $html .= '<div class="vertical-list">';
-                    foreach ($row['todos_registros'] as $registro) {
-                        $html .= '<div class="vertical-item">' . $registro . '</div>';
-                    }
-                    $html .= '</div>';
+                    $html .= implode(', ', $row['todos_registros']);
                 } else {
                     $html .= '-';
                 }
                 $html .= '</td>';
-                // REGISTRADO POR en formato vertical
+                // MODIFICADO: REGISTRADO POR separados por comas
                 $html .= '<td>';
                 if (!empty($row['todos_registradores'])) {
-                    $html .= '<div class="vertical-list">';
-                    foreach ($row['todos_registradores'] as $registrador) {
-                        $html .= '<div class="vertical-item">' . $registrador . '</div>';
-                    }
-                    $html .= '</div>';
+                    $html .= implode(', ', $row['todos_registradores']);
                 } else {
                     $html .= '-';
                 }

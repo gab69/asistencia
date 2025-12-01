@@ -198,10 +198,10 @@
             text-decoration: none;
             box-shadow: var(--shadow-sm);
             height: 50px;
+        }
 
-
-
-   
+        i{
+            margin-right: 8px;
 
         }
         
@@ -218,6 +218,7 @@
         .btn-secondary {
             background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-light) 100%);
             color: var(--dark);
+            
         }
         
         .btn-success {

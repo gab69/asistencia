@@ -196,7 +196,7 @@
             </div>
             
             <div class="footer">
-                <p>Control de Asistencia &copy; <?= date('Y') ?> - Universidad Roosevelt</p>
+                <p>Registro de Asistencia &copy; <?= date('Y') ?> - Universidad Roosevelt</p>
                 <p>Desarrollado por @GabRC</p>
             </div>
         </div>
@@ -329,13 +329,21 @@
                     <div class="typing-line">
                         <span class="typing-text" id="typing-text-1"></span>
                     </div>
-                    <div class="typing-line">
+                    <div class="typing-line segunda-linea">
                         <span class="typing-text" id="typing-text-2"></span>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+
+
+
+
+
+
+    
 
     <script>
         // Enfocar automáticamente el campo DNI

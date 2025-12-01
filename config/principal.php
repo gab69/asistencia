@@ -280,8 +280,8 @@ $welcomeMessages = [
         "Los fantasmas de RRHH te están observando..."
     ],
     'navidad' => [
-        "🎄 ¿Carbón o aguinaldo? 🎄",
-        "Depende de cuántas veces has llegado tarde este mes..."
+        "🎄 Por un año de compromiso 🎄",
+        "tu aguinaldo brilla más que el árbol. ¡Felices Fiestas!"
     ],
     'amor' => [
         "❤️ Tu único amor verdadero debería ser... ❤️",

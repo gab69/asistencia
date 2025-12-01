@@ -317,7 +317,7 @@
         .typing-container {
             display: inline-block;
             text-align: center;
-            min-height: 5rem;
+            min-height: 2rem;
         }
         
         .typing-line {
@@ -325,6 +325,9 @@
             height: 2rem;
             overflow: hidden;
             margin-bottom: 1rem;
+        }
+        .segunda-linea{
+            height: 4rem;
         }
         
         .typing-text {

@@ -100,7 +100,7 @@
             <!-- BOTÓN DE EXPORTAR EXCEL AGREGADO -->
             <?php if ($reportType !== 'config' && $reportType !== 'perfil'): ?>
                 <a href="?<?= http_build_query(array_merge($_GET, ['export_excel' => 1])) ?>" class="btn btn-excel">
-                    <i class="fas fa-file-excel"></i> Excel
+                    <i class="fas fa-file-excel separacion"></i> Excel
                 </a>
             <?php endif; ?>
             
